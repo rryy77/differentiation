@@ -296,6 +296,43 @@ export default function LimitDiff() {
                 alignItems: "center",
               }}
             >
+              {/* controls (no drag) */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 18,
+                  marginTop: 12,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ minWidth: 240 }}>
+                  <div style={labelStyle}>x（slider）</div>
+                  <input
+                    type="range"
+                    min={xMin}
+                    max={xMax}
+                    step={0.001}
+                    value={x}
+                    onChange={(e) => setX(Number(e.target.value))}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+
+                <div style={{ minWidth: 240 }}>
+                  <div style={labelStyle}>x + h（slider）</div>
+                  <input
+                    type="range"
+                    min={xMin}
+                    max={xMax}
+                    step={0.001}
+                    value={xh}
+                    onChange={(e) => setXh(Number(e.target.value))}
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+
               <div>
                 <div style={labelStyle}>x</div>
                 <div style={valueStyle}>{fmt(x, 4)}</div>
