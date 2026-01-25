@@ -122,7 +122,7 @@ export default function LimitDiff() {
   const goLimit = () => setXh(x + Math.sign(h || 1) * EPS);
 
   /** drag handlers */
-  const onMoveF = (e: React.MouseEvent<SVGSVGElement>) => {
+  const onMoveF = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!dragging.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const px = e.clientX - rect.left;
@@ -130,7 +130,7 @@ export default function LimitDiff() {
     dragging.current === "x" ? setX(nx) : setXh(nx);
   };
 
-  const onMoveD = (e: React.MouseEvent<SVGSVGElement>) => {
+  const onMoveD = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!dragging.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const px = e.clientX - rect.left;
@@ -345,10 +345,10 @@ export default function LimitDiff() {
               <svg
                 width={W}
                 height={H1}
-                onMouseMove={onMoveF}
-                onMouseUp={() => (dragging.current = null)}
-                onMouseLeave={() => (dragging.current = null)}
-                style={{ display: "block" }}
+                onPointerMove={onMoveF}
+                onPointerUp={() => (dragging.current = null)}
+                onPointerLeave={() => (dragging.current = null)}
+                style={{ display: "block", touchAction: "none" }}
               >
                 {gridLines(H1, syF, yRangeF.min, yRangeF.max)}
 
@@ -445,10 +445,10 @@ export default function LimitDiff() {
               <svg
                 width={W}
                 height={H2}
-                onMouseMove={onMoveD}
-                onMouseUp={() => (dragging.current = null)}
-                onMouseLeave={() => (dragging.current = null)}
-                style={{ display: "block" }}
+                onPointerMove={onMoveD}
+                onPointerUp={() => (dragging.current = null)}
+                onPointerLeave={() => (dragging.current = null)}
+                style={{ display: "block", touchAction: "none" }}
               >
                 {gridLines(H2, syD, yRangeD.min, yRangeD.max)}
 
