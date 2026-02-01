@@ -10,6 +10,7 @@ import {
   fmt,
   normalizeNumberInput,
   stripLeadingZeros,
+  FormulaText,
 } from "../../shared";
 
 const math = create(all);
@@ -21,6 +22,12 @@ const ZOOM_MAX = 4;
 
 type TermType = "x4" | "x3" | "x2" | "x" | "const";
 
+type Term = {
+  type: TermType;
+  coef: number;
+  coefStr?: string; // 分数や√の表示用（例: "1/3", "√2"）
+};
+
 const TERM_BUTTONS: { type: TermType; label: string }[] = [
   { type: "x4", label: "x⁴" },
   { type: "x3", label: "x³" },
@@ -29,10 +36,15 @@ const TERM_BUTTONS: { type: TermType; label: string }[] = [
   { type: "const", label: "定数項" },
 ];
 
-/** f'(x) の項 → 数式文字列 */
-function termToExprPart(t: { type: TermType; coef: number }): string {
+/** f'(x) の項 → mathjs 用数式（coefStr があれば分数・√をそのまま使う） */
+function termToExprPart(t: Term): string {
   if (t.coef === 0) return "";
-  if (t.type === "const") return String(t.coef);
+  const coefPart = t.coefStr
+    ? t.coefStr.includes("√")
+      ? toMathJsFormat(t.coefStr)
+      : t.coefStr
+    : String(t.coef);
+  if (t.type === "const") return coefPart;
   const base =
     t.type === "x4"
       ? "x^4"
@@ -41,12 +53,12 @@ function termToExprPart(t: { type: TermType; coef: number }): string {
       : t.type === "x2"
       ? "x^2"
       : "x";
-  if (t.coef === 1) return base;
-  if (t.coef === -1) return `-${base}`;
-  return `${t.coef}*${base}`;
+  if (coefPart === "1") return base;
+  if (coefPart === "-1") return `-${base}`;
+  return `${coefPart}*${base}`;
 }
 
-function termsToExpr(terms: Array<{ type: TermType; coef: number }>): string {
+function termsToExpr(terms: Term[]): string {
   const parts = terms
     .filter((t) => t.coef !== 0)
     .map(termToExprPart)
@@ -55,10 +67,11 @@ function termsToExpr(terms: Array<{ type: TermType; coef: number }>): string {
   return parts.join(" + ").replace(/\s\+\s-/g, " - ");
 }
 
-/** f'(x) の項 → 表示用（x⁴ x³ など） */
-function termToDisplayPart(t: { type: TermType; coef: number }): string {
+/** f'(x) の項 → 表示用（x⁴ x³ など、分数は FormulaText で縦書き表示） */
+function termToDisplayPart(t: Term): string {
   if (t.coef === 0) return "";
-  if (t.type === "const") return String(t.coef);
+  const coefDisplay = t.coefStr || String(t.coef);
+  if (t.type === "const") return coefDisplay;
   const base =
     t.type === "x4"
       ? "x⁴"
@@ -67,14 +80,12 @@ function termToDisplayPart(t: { type: TermType; coef: number }): string {
       : t.type === "x2"
       ? "x²"
       : "x";
-  if (t.coef === 1) return base;
-  if (t.coef === -1) return `-${base}`;
-  return `${t.coef}${base}`;
+  if (t.coef === 1 && !t.coefStr) return base;
+  if (t.coef === -1 && !t.coefStr) return `-${base}`;
+  return `${coefDisplay}${base}`;
 }
 
-function termsToDisplayString(
-  terms: Array<{ type: TermType; coef: number }>
-): string {
+function termsToDisplayString(terms: Term[]): string {
   const parts = terms
     .filter((t) => t.coef !== 0)
     .map(termToDisplayPart)
@@ -83,21 +94,23 @@ function termsToDisplayString(
   return parts.join(" + ").replace(/\s\+\s-/g, " - ");
 }
 
-/** ∫f'(x)dx の項を構築（多項式の積分） */
-function termToIntegralPart(t: { type: TermType; coef: number }): string {
+/** ∫f'(x)dx の項を構築（coefStr があれば分数・√をそのまま使う） */
+function termToIntegralPart(t: Term): string {
   if (t.coef === 0) return "";
-  if (t.type === "const") return `${t.coef}*x`;
-  if (t.type === "x4") return `${t.coef}/5*x^5`;
-  if (t.type === "x3") return `${t.coef}/4*x^4`;
-  if (t.type === "x2") return `${t.coef}/3*x^3`;
-  if (t.type === "x") return `${t.coef}/2*x^2`;
+  const coefPart = t.coefStr
+    ? t.coefStr.includes("√")
+      ? toMathJsFormat(t.coefStr)
+      : t.coefStr
+    : String(t.coef);
+  if (t.type === "const") return `${coefPart}*x`;
+  if (t.type === "x4") return `${coefPart}/5*x^5`;
+  if (t.type === "x3") return `${coefPart}/4*x^4`;
+  if (t.type === "x2") return `${coefPart}/3*x^3`;
+  if (t.type === "x") return `${coefPart}/2*x^2`;
   return "";
 }
 
-function termsToIntegralExpr(
-  terms: Array<{ type: TermType; coef: number }>,
-  c: number
-): string {
+function termsToIntegralExpr(terms: Term[], c: number): string {
   const parts = terms
     .filter((t) => t.coef !== 0)
     .map(termToIntegralPart)
@@ -107,7 +120,7 @@ function termsToIntegralExpr(
   return parts.join(" + ").replace(/\s\+\s-/g, " - ");
 }
 
-/** f(x) の表示用：* と ^2 ^3 ^4 ^5 を ²³⁴⁵ に置き換え */
+/** f(x) の表示用：* と ^ を除去、sqrt(n)→√n（分数は FormulaText で縦書き表示） */
 function integralToDisplay(str: string): string {
   return str
     .replace(/\*/g, "")
@@ -115,28 +128,61 @@ function integralToDisplay(str: string): string {
     .replace(/\^3/g, "³")
     .replace(/\^4/g, "⁴")
     .replace(/\^5/g, "⁵")
-    .replace(/(\d)\/(\d)/g, "$1⁄$2");
+    .replace(/sqrt\((\d+)\)/g, "√$1");
 }
 
 const DESC_ORDER: TermType[] = ["x4", "x3", "x2", "x", "const"];
 
-function mergeAndSortTerms(
-  terms: Array<{ type: TermType; coef: number }>
-): Array<{ type: TermType; coef: number }> {
-  const byType: Record<TermType, number> = {
-    x4: 0,
-    x3: 0,
-    x2: 0,
-    x: 0,
-    const: 0,
+/** √n を簡約形で返す（√8 → "2√2"、√5 → "√5"、√4 → "2"） */
+function simplifySquareRoot(n: number): string {
+  if (n < 0 || !Number.isFinite(n)) return "";
+  if (n === 0) return "0";
+  if (!Number.isInteger(n)) {
+    const r = Math.sqrt(n);
+    return Number.isInteger(r) ? String(r) : r.toFixed(4).replace(/\.?0+$/, "");
+  }
+  let a = 1;
+  for (let i = Math.floor(Math.sqrt(n)); i > 1; i--) {
+    if (n % (i * i) === 0) {
+      a = i;
+      break;
+    }
+  }
+  const b = n / (a * a);
+  if (b === 1) return String(a);
+  if (a === 1) return `√${n}`;
+  return `${a}√${b}`;
+}
+
+/** "2√2" → "2*sqrt(2)"、"√5" → "sqrt(5)" に変換して mathjs で評価可能に */
+function toMathJsFormat(s: string): string {
+  return s.replace(/(-?\d*)√(\d+)/g, (_, a, b) => {
+    if (a === "" || a === "-") return `${a}sqrt(${b})`;
+    return `${a}*sqrt(${b})`;
+  });
+}
+
+function mergeAndSortTerms(terms: Term[]): Term[] {
+  const byType: Record<TermType, { coef: number; coefStr?: string; nonzeroCount: number }> = {
+    x4: { coef: 0, nonzeroCount: 0 },
+    x3: { coef: 0, nonzeroCount: 0 },
+    x2: { coef: 0, nonzeroCount: 0 },
+    x: { coef: 0, nonzeroCount: 0 },
+    const: { coef: 0, nonzeroCount: 0 },
   };
   for (const t of terms) {
-    byType[t.type] += t.coef;
+    byType[t.type].coef += t.coef;
+    if (t.coef !== 0) {
+      byType[t.type].nonzeroCount += 1;
+      if (t.coefStr !== undefined) {
+        byType[t.type].coefStr = t.coefStr;
+      }
+    }
   }
-  return DESC_ORDER.filter((type) => byType[type] !== 0).map((type) => ({
-    type,
-    coef: byType[type],
-  }));
+  return DESC_ORDER.filter((type) => byType[type].coef !== 0).map((type) => {
+    const { coef, coefStr, nonzeroCount } = byType[type];
+    return { type, coef, coefStr: nonzeroCount === 1 ? coefStr : undefined };
+  });
 }
 
 type ParsedState =
@@ -151,7 +197,7 @@ type ParsedState =
 
 /** 項リストから f'(x) と f(x)=∫f'(x)dx を構築 */
 function parseFromTerms(
-  terms: Array<{ type: TermType; coef: number }>,
+  terms: Term[],
   integralConst: number
 ): ParsedState {
   const dfExprString = termsToExpr(terms);
@@ -173,9 +219,7 @@ function parseFromTerms(
 }
 
 export default function CustomDerivative() {
-  const [terms, setTerms] = useState<Array<{ type: TermType; coef: number }>>([
-    { type: "x", coef: 2 },
-  ]);
+  const [terms, setTerms] = useState<Term[]>([{ type: "x", coef: 0 }]);
   const [integralConst, setIntegralConst] = useState(0);
   const [integralConstStr, setIntegralConstStr] = useState("0");
   const [pendingTerm, setPendingTerm] = useState<TermType | null>(null);
@@ -202,12 +246,26 @@ export default function CustomDerivative() {
 
   const addTerm = () => {
     if (pendingTerm === null) return;
-    const coef =
-      pendingCoef === "" || pendingCoef === "-" ? 0 : parseFloat(pendingCoef);
+    let coef: number;
+    if (pendingCoef === "" || pendingCoef === "-") {
+      coef = 0;
+    } else {
+      try {
+        coef = math.evaluate(toMathJsFormat(pendingCoef)) as number;
+      } catch {
+        coef = NaN;
+      }
+    }
     if (Number.isFinite(coef)) {
-      setTerms((prev) =>
-        mergeAndSortTerms([...prev, { type: pendingTerm, coef }])
-      );
+      const newTerm: Term = {
+        type: pendingTerm,
+        coef,
+        coefStr:
+          pendingCoef.includes("/") || pendingCoef.includes("√")
+            ? pendingCoef
+            : undefined,
+      };
+      setTerms((prev) => mergeAndSortTerms([...prev, newTerm]));
     }
     setPendingTerm(null);
     setPendingCoef("");
@@ -222,7 +280,7 @@ export default function CustomDerivative() {
   };
 
   const reset = () => {
-    setTerms([{ type: "x", coef: 2 }]);
+    setTerms([{ type: "x", coef: 0 }]);
     setIntegralConst(0);
     setIntegralConstStr("0");
     setPendingTerm(null);
@@ -356,36 +414,38 @@ export default function CustomDerivative() {
     : NaN;
 
   return (
-    <div className="flex justify-center p-6 pt-2">
+    <div className="flex justify-center p-6 pt-4">
       <div className="w-[900px] max-w-full">
-        <div className="rounded-[22px] bg-limitdiff-card border border-white/15 shadow-[0_30px_90px_rgba(0,0,0,0.50)] overflow-hidden">
-          <div className="p-4 bg-[rgba(15,23,42,0.5)] border-b border-white/15 space-y-4">
+        <div className="rounded-[22px] bg-limitdiff-card border-gradient border border-white/10 shadow-card backdrop-blur-sm overflow-hidden transition-shadow duration-300 hover:shadow-card-hover">
+          <div className="p-5 bg-limitdiff-panel border-b border-white/10 space-y-4">
             <div className="space-y-3">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-ui-base font-medium shrink-0">f'(x) =</span>
-                <span className="text-cyan-300 font-mono text-base min-h-[1.5rem]">
-                  {termsToDisplayString(terms)}
+                <span className="text-ui-base font-semibold shrink-0 text-lg">
+                  f'(x) =
+                </span>
+                <span className="text-accent-purple font-mono text-lg min-h-[1.5rem] glow-text-purple inline-flex flex-wrap items-baseline">
+                  <FormulaText text={termsToDisplayString(terms)} />
                 </span>
                 {terms.length > 0 && (
                   <>
                     <button
                       type="button"
                       onClick={applyDescendingOrder}
-                      className="text-xs text-ui-muted hover:text-cyan-300 ml-1 rounded px-1.5 py-0.5 hover:bg-cyan-400/10"
+                      className="text-xs text-ui-muted hover:text-accent-cyan ml-2 rounded-lg px-2 py-1 hover:bg-accent-cyan/10 transition-all duration-200"
                     >
                       降べきの順
                     </button>
                     <button
                       type="button"
                       onClick={removeLastTerm}
-                      className="text-xs text-ui-muted hover:text-rose-400 ml-1"
+                      className="text-xs text-ui-muted hover:text-accent-pink ml-1 rounded-lg px-2 py-1 hover:bg-accent-pink/10 transition-all duration-200"
                     >
                       最後の項を消す
                     </button>
                     <button
                       type="button"
                       onClick={reset}
-                      className="text-xs text-ui-muted hover:text-rose-400 ml-1 rounded px-1.5 py-0.5 hover:bg-rose-500/10"
+                      className="text-xs text-ui-muted hover:text-accent-pink ml-1 rounded-lg px-2 py-1 hover:bg-accent-pink/10 transition-all duration-200"
                     >
                       リセット
                     </button>
@@ -394,7 +454,7 @@ export default function CustomDerivative() {
               </div>
 
               <div className="flex flex-wrap gap-2 items-center">
-                <span className="text-xs text-ui-muted shrink-0">
+                <span className="text-sm text-ui-muted shrink-0 font-medium">
                   f'(x) の項を追加:
                 </span>
                 {TERM_BUTTONS.map(({ type, label }) => (
@@ -405,18 +465,18 @@ export default function CustomDerivative() {
                       setPendingTerm(type);
                       setPendingCoef("");
                     }}
-                    className={`rounded-full py-1.5 px-2.5 text-xs border transition-colors ${
+                    className={`rounded-xl py-2 px-3 text-sm font-medium border transition-all duration-200 ${
                       pendingTerm === type
-                        ? "border-cyan-400/60 bg-cyan-400/20 text-white"
-                        : "border-white/15 bg-white/5 text-ui-base hover:bg-white/10 hover:text-white hover:border-cyan-400/40"
+                        ? "border-accent-cyan/60 bg-accent-cyan/20 text-white shadow-glow-cyan"
+                        : "border-white/20 bg-white/8 text-ui-base hover:bg-accent-cyan/10 hover:text-white hover:border-accent-cyan/40"
                     }`}
                   >
                     {label}
                   </button>
                 ))}
                 {pendingTerm !== null && (
-                  <span className="flex items-center gap-2 flex-wrap ml-2">
-                    <span className="text-xs text-ui-muted">
+                  <span className="flex items-center gap-1.5 flex-wrap ml-2">
+                    <span className="text-xs text-ui-muted shrink-0">
                       {pendingTerm === "const" ? "定数" : "係数"}:
                     </span>
                     <input
@@ -433,14 +493,120 @@ export default function CustomDerivative() {
                       onKeyDown={(e) => {
                         if (e.key === "Enter") addTerm();
                       }}
-                      placeholder={pendingTerm === "const" ? "例: -1" : "例: 3"}
-                      className="w-16 px-2 py-1 rounded bg-white/5 border border-white/15 text-ui-base text-sm tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none focus:outline-none focus:ring-1 focus:ring-cyan-400/50"
-                      autoFocus
+                      placeholder="直接入力"
+                      className="w-20 px-2 py-1 rounded bg-black/30 border border-white/20 text-ui-base text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 placeholder:text-ui-dim"
                     />
                     <button
                       type="button"
+                      onClick={() =>
+                        setPendingCoef((s) =>
+                          s.startsWith("-")
+                            ? s.slice(1) || ""
+                            : s
+                            ? `-${s}`
+                            : "-"
+                        )
+                      }
+                      className="rounded-lg py-1.5 px-2.5 text-sm border border-white/20 bg-white/8 text-ui-base hover:bg-accent-purple/15 hover:border-accent-purple/40 hover:text-white transition-all duration-200"
+                    >
+                      −
+                    </button>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setPendingCoef((s) => s + String(n))}
+                        className="rounded-lg py-1.5 px-2.5 text-sm border border-white/20 bg-white/8 text-ui-base hover:bg-accent-cyan/15 hover:border-accent-cyan/40 hover:text-white transition-all duration-200 w-9"
+                      >
+                        {n}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setPendingCoef((s) => s + ".")}
+                      disabled={pendingCoef.includes(".")}
+                      className="rounded-lg py-1.5 px-2.5 text-sm border border-white/10 bg-white/5 text-ui-base hover:bg-accent-cyan/15 hover:border-accent-cyan/40 hover:text-white transition-all duration-200 w-9 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white/5 disabled:hover:border-white/10"
+                    >
+                      .
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPendingCoef((s) => {
+                          // 空または"-"のみなら√を追加（先に√を押すパターン）
+                          if (s === "" || s === "-") {
+                            return s + "√";
+                          }
+                          // すでに√Xの形式（√8, -√12など）なら簡約化
+                          const sqrtMatch = s.match(/^(-?)√(\d+)$/);
+                          if (sqrtMatch) {
+                            const [, sign, num] = sqrtMatch;
+                            const simplified = simplifySquareRoot(
+                              parseInt(num, 10)
+                            );
+                            return sign + simplified;
+                          }
+                          // 通常の数字なら√を計算して簡約化
+                          const n = parseFloat(s);
+                          if (Number.isFinite(n) && n >= 0) {
+                            return simplifySquareRoot(n);
+                          }
+                          return s;
+                        })
+                      }
+                      disabled={
+                        pendingCoef.endsWith("√") ||
+                        (!pendingCoef.includes("√") &&
+                          pendingCoef !== "" &&
+                          pendingCoef !== "-" &&
+                          parseFloat(pendingCoef) < 0)
+                      }
+                      className="rounded-lg py-1.5 px-2.5 text-sm border border-white/10 bg-accent-purple/10 text-accent-purple hover:bg-accent-purple/25 hover:border-accent-purple/50 hover:text-white transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-accent-purple/10"
+                    >
+                      √
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPendingCoef((s) => {
+                          const n = parseFloat(s);
+                          if (!Number.isFinite(n)) return s;
+                          return String(Math.abs(n));
+                        })
+                      }
+                      disabled={pendingCoef === "" || pendingCoef === "-"}
+                      className="rounded-lg py-1.5 px-2.5 text-sm border border-white/10 bg-accent-purple/10 text-accent-purple hover:bg-accent-purple/25 hover:border-accent-purple/50 hover:text-white transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-accent-purple/10"
+                    >
+                      |x|
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingCoef((s) => s + "/")}
+                      disabled={pendingCoef.includes("/")}
+                      className="rounded-lg py-1.5 px-2.5 text-sm border border-white/10 bg-accent-blue/10 text-accent-blue hover:bg-accent-blue/25 hover:border-accent-blue/50 hover:text-white transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-accent-blue/10"
+                    >
+                      /
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingCoef((s) => s.slice(0, -1))}
+                      disabled={pendingCoef === ""}
+                      className="text-sm text-ui-muted hover:text-accent-orange px-2 py-1 rounded-lg hover:bg-accent-orange/10 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                    >
+                      戻る
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPendingCoef("")}
+                      disabled={pendingCoef === ""}
+                      className="text-sm text-ui-muted hover:text-accent-pink px-2 py-1 rounded-lg hover:bg-accent-pink/10 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                    >
+                      消す
+                    </button>
+                    <button
+                      type="button"
                       onClick={addTerm}
-                      className="rounded-full py-1 px-2 text-xs bg-cyan-500/30 text-cyan-200 border border-cyan-400/40 hover:bg-cyan-500/50"
+                      className="rounded-xl py-1.5 px-4 text-sm font-medium bg-gradient-to-r from-accent-cyan/30 to-accent-purple/30 text-white border border-accent-cyan/40 hover:from-accent-cyan/50 hover:to-accent-purple/50 hover:shadow-glow-cyan transition-all duration-200"
                     >
                       追加
                     </button>
@@ -475,10 +641,8 @@ export default function CustomDerivative() {
                     if (raw === "" || raw === "-" || Number.isFinite(n))
                       setIntegralConst(raw === "" || raw === "-" ? 0 : n);
                   }}
-                  onBlur={() =>
-                    setIntegralConstStr(integralConst.toFixed(1))
-                  }
-                  className="w-16 px-2 py-1 rounded bg-white/5 border border-white/15 text-ui-base text-sm tabular-nums focus:outline-none focus:ring-1 focus:ring-cyan-400/50"
+                  onBlur={() => setIntegralConstStr(integralConst.toFixed(1))}
+                  className="w-16 px-2 py-1 rounded bg-transparent border border-white/20 text-ui-base text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-accent-cyan/50"
                 />
               </div>
             </div>
@@ -519,7 +683,7 @@ export default function CustomDerivative() {
                         setXValue(raw === "" || raw === "-" ? 0 : n);
                     }}
                     onBlur={() => setXInputStr(xValue.toFixed(1))}
-                    className="w-20 px-2 py-1.5 rounded-lg bg-white/5 border border-white/15 text-ui-base text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400/50 tabular-nums"
+                    className="w-20 px-2 py-1.5 rounded-lg bg-transparent border border-white/20 text-ui-base text-sm focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 tabular-nums"
                   />
                 </div>
                 {parsed.ok ? (
@@ -527,9 +691,11 @@ export default function CustomDerivative() {
                     <div className="flex flex-col gap-0.5">
                       <span className="text-xs text-ui-muted">f(x) =</span>
                       <span className="text-sm text-cyan-300 font-mono">
-                        {integralToDisplay(
-                          termsToIntegralExpr(terms, integralConst)
-                        )}
+                        <FormulaText
+                          text={integralToDisplay(
+                            termsToIntegralExpr(terms, integralConst)
+                          )}
+                        />
                       </span>
                     </div>
                     <div className="flex flex-col gap-0.5">

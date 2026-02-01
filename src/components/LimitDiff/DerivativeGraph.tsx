@@ -66,7 +66,13 @@ export function DerivativeGraph({
           strokeAxis={strokeAxis}
         />
 
-        <path d={curveD} stroke={colors.d} strokeWidth={2.3} fill="none" />
+        <path
+          d={curveD}
+          stroke={colors.d}
+          strokeWidth={2.5}
+          fill="none"
+          style={{ filter: "drop-shadow(0 0 4px rgba(192,132,252,0.35))" }}
+        />
         <circle cx={sx(x, width)} cy={syD(dfx)} r={6} fill={colors.x} />
         <circle
           cx={sx(xh, width)}

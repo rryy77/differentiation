@@ -29,3 +29,23 @@ export function normalizeNumberInput(str: string): string {
 export function stripLeadingZeros(str: string): string {
   return str.replace(/^(-?)0+(?=\d)/, "$1");
 }
+
+/** 上付き数字 ⁰¹²³⁴⁵⁶⁷⁸⁹ */
+const SUPER = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+/** 下付き数字 ₀₁₂₃₄₅₆₇₈₉ */
+const SUB = "₀₁₂₃₄₅₆₇₈₉";
+
+function toSuper(c: string): string {
+  return c === "-" ? "⁻" : [...c].map((d) => (d >= "0" && d <= "9" ? SUPER[Number(d)] : d)).join("");
+}
+function toSub(c: string): string {
+  return [...c].map((d) => (d >= "0" && d <= "9" ? SUB[Number(d)] : d)).join("");
+}
+
+/** 分数を人間表記に（1/3 → ¹⁄₃、-2/5 → ⁻²⁄₅） */
+export function formatFractionDisplay(str: string): string {
+  return str.replace(/(-?)(\d+)\/(\d+)/g, (_, sign, num, den) => {
+    const signStr = sign === "-" ? "⁻" : "";
+    return signStr + toSuper(num) + "⁄" + toSub(den);
+  });
+}

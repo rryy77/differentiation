@@ -143,9 +143,9 @@ export default function LimitDiff() {
   };
 
   return (
-    <div className="flex justify-center p-6 pt-2">
+    <div className="flex justify-center p-6 pt-4">
       <div className="w-[900px] max-w-full">
-        <div className="rounded-[22px] bg-limitdiff-card border border-white/15 shadow-[0_30px_90px_rgba(0,0,0,0.50)] overflow-hidden">
+        <div className="rounded-[22px] bg-limitdiff-card border-gradient border border-white/10 shadow-card backdrop-blur-sm overflow-hidden transition-shadow duration-300 hover:shadow-card-hover">
           <HeaderControls
             fnType={fnType}
             setFnType={setFnType}
@@ -165,14 +165,14 @@ export default function LimitDiff() {
             dfxh={dfxh}
           />
 
-          <div className="p-4 bg-limitdiff-panel space-y-3.5">
+          <div className="p-5 bg-limitdiff-panel space-y-4">
             <div className="flex flex-wrap items-center justify-end gap-3">
-              <span className="text-xs text-ui-muted">拡大・縮小:</span>
+              <span className="text-sm text-ui-muted font-medium">拡大・縮小:</span>
               <button
                 type="button"
                 onClick={zoomOut}
                 disabled={zoom <= ZOOM_MIN}
-                className="rounded-lg py-1.5 px-3 text-sm border border-white/15 bg-white/5 text-ui-base disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10"
+                className="rounded-xl py-2 px-4 text-sm border border-white/20 bg-white/8 text-ui-base disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 hover:border-white/25 transition-all duration-200"
               >
                 −
               </button>
@@ -183,24 +183,24 @@ export default function LimitDiff() {
                 step={0.05}
                 value={zoom}
                 onChange={(e) => setZoom(Number(e.target.value))}
-                className="w-28 h-2 rounded-lg appearance-none bg-white/10 accent-cyan-400"
+                className="w-32 h-1.5 rounded-lg cursor-pointer"
               />
               <button
                 type="button"
                 onClick={zoomIn}
                 disabled={zoom >= ZOOM_MAX}
-                className="rounded-lg py-1.5 px-3 text-sm border border-white/15 bg-white/5 text-ui-base disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10"
+                className="rounded-xl py-2 px-4 text-sm border border-white/20 bg-white/8 text-ui-base disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 hover:border-white/25 transition-all duration-200"
               >
                 +
               </button>
               <button
                 type="button"
                 onClick={zoomReset}
-                className="rounded-lg py-1.5 px-3 text-sm border border-white/15 bg-white/5 text-ui-base hover:bg-white/10"
+                className="rounded-xl py-2 px-4 text-sm border border-white/20 bg-white/8 text-ui-base hover:bg-accent-cyan/10 hover:border-accent-cyan/30 hover:text-accent-cyan transition-all duration-200"
               >
                 1:1
               </button>
-              <span className="text-xs text-ui-muted tabular-nums w-10">
+              <span className="text-sm text-ui-muted tabular-nums w-12 text-center font-medium">
                 {zoom.toFixed(1)}×
               </span>
             </div>

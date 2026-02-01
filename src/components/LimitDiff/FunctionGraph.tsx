@@ -68,13 +68,20 @@ export function FunctionGraph({
           strokeAxis={strokeAxis}
         />
 
-        <path d={curveF} stroke={colors.f} strokeWidth={2.3} fill="none" />
+        <path
+          d={curveF}
+          stroke={colors.f}
+          strokeWidth={2.5}
+          fill="none"
+          style={{ filter: "drop-shadow(0 0 4px rgba(34,211,238,0.35))" }}
+        />
         <path
           d={tangentF(x)}
           stroke={colors.tanX}
           strokeWidth={2.8}
           fill="none"
           opacity={0.95}
+          style={{ filter: "drop-shadow(0 0 3px rgba(96,165,250,0.3))" }}
         />
         <path
           d={tangentF(xh)}
@@ -82,6 +89,7 @@ export function FunctionGraph({
           strokeWidth={2.8}
           fill="none"
           opacity={0.95}
+          style={{ filter: "drop-shadow(0 0 3px rgba(52,211,153,0.3))" }}
         />
 
         <line
