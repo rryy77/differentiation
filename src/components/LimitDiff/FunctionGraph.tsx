@@ -1,6 +1,5 @@
 import React from "react";
-import { GridLines } from "./GridLines";
-import { strokeGrid, strokeAxis, colors } from "./theme";
+import { GridLines, strokeGrid, strokeAxis, colors } from "../../shared";
 
 type Props = {
   width: number;
@@ -46,7 +45,7 @@ export function FunctionGraph({
   onMouseDownXh,
 }: Props) {
   return (
-    <div className="rounded-[18px] border border-white/10 bg-[rgba(2,6,23,0.35)] p-3 overflow-x-auto">
+    <div className="rounded-[18px] border border-white/15 bg-[rgba(15,23,42,0.5)] p-3 overflow-x-auto">
       <svg
         width={width}
         height={height}
@@ -126,6 +125,23 @@ export function FunctionGraph({
           fill={colors.xh}
           opacity={0.1}
         />
+
+        <text
+          x={sx(x, width) + 10}
+          y={syF(fx) + 4}
+          textAnchor="start"
+          style={{ fontSize: 11, fill: "rgba(255,255,255,0.7)", fontFamily: "system-ui" }}
+        >
+          ({x.toFixed(1)}, {fx.toFixed(1)})
+        </text>
+        <text
+          x={sx(xh, width) + 10}
+          y={syF(fxh) + 4}
+          textAnchor="start"
+          style={{ fontSize: 11, fill: "rgba(255,255,255,0.7)", fontFamily: "system-ui" }}
+        >
+          ({xh.toFixed(1)}, {fxh.toFixed(1)})
+        </text>
       </svg>
     </div>
   );

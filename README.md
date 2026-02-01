@@ -1,47 +1,36 @@
-# Getting Started with Create React App
+# 極限・微分の可視化アプリ
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+関数 f(x) とその導関数 f'(x) をグラフで表示し、極限や微分・積分の意味を視覚的に理解できる Web アプリです。
 
-## Available Scripts
+## 主な機能
 
-In the project directory, you can run:
+### 1. 極限・微分（x² / x³）
+あらかじめ用意された多項式（x², x³, x⁴）を選び、x と x+h のスライダーで点を動かして極限 h→0 のイメージを確認できます。
 
-### `npm start`
+### 2. 自分で関数を指定
+x⁴, x³, x², x, 定数項を組み合わせて多項式 f(x) を作成。導関数 f'(x) が自動で計算され、両方のグラフが表示されます。
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+### 3. 自分で導関数を指定
+f'(x) を項で指定すると、積分によって f(x) が自動で求まります（関数指定の逆バージョン）。積分定数 C も設定できます。
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## 技術スタック
 
-### `npm test`
+- React + TypeScript
+- Tailwind CSS
+- math.js（数式のパース・微分・積分）
+- react-router-dom
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## 開発の始め方
 
-### `npm run build`
+```bash
+npm install
+npm start
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+[http://localhost:3000](http://localhost:3000) で開きます。
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```bash
+npm run build
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
-
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
-
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-# differentiation
+本番用ビルドを `build` フォルダに出力します。

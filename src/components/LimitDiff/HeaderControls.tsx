@@ -12,6 +12,7 @@ type Props = {
   xMin: number;
   xMax: number;
   goLimit: () => void;
+  onReset: () => void;
   h: number;
   fx: number;
   fxh: number;
@@ -30,6 +31,7 @@ export function HeaderControls({
   xMin,
   xMax,
   goLimit,
+  onReset,
   h,
   fx,
   fxh,
@@ -38,32 +40,44 @@ export function HeaderControls({
   dfxh,
 }: Props) {
   return (
-    <div className="flex justify-between gap-3 p-4 bg-[rgba(2,6,23,0.35)] border-b border-white/10">
+    <div className="flex justify-between gap-3 p-4 bg-[rgba(15,23,42,0.5)] border-b border-white/15">
       <div className="flex gap-2.5 flex-wrap">
         <button
-          className="rounded-full py-2.5 px-3 border border-white/10 bg-white/5 text-gray-200 cursor-pointer font-semibold"
+          className="rounded-full py-2.5 px-3 border border-white/15 bg-white/5 text-ui-base cursor-pointer font-semibold"
           onClick={() => setFnType("x2")}
         >
           x²
         </button>
         <button
-          className="rounded-full py-2.5 px-3 border border-white/10 bg-white/5 text-gray-200 cursor-pointer font-semibold"
+          className="rounded-full py-2.5 px-3 border border-white/15 bg-white/5 text-ui-base cursor-pointer font-semibold"
           onClick={() => setFnType("x3")}
         >
           x³
         </button>
         <button
-          className="rounded-full py-2.5 px-3 border border-white/10 bg-white/5 text-gray-200 cursor-pointer font-semibold"
+          className="rounded-full py-2.5 px-3 border border-white/15 bg-white/5 text-ui-base cursor-pointer font-semibold"
+          onClick={() => setFnType("x4")}
+        >
+          x⁴
+        </button>
+        <button
+          className="rounded-full py-2.5 px-3 border border-white/15 bg-white/5 text-ui-base cursor-pointer font-semibold"
           onClick={goLimit}
         >
           h → 0
+        </button>
+        <button
+          className="rounded-full py-2.5 px-3 border border-white/15 bg-white/5 text-ui-base cursor-pointer font-semibold hover:bg-rose-500/20 hover:border-rose-400/30"
+          onClick={onReset}
+        >
+          リセット
         </button>
       </div>
 
       <div className="flex gap-4 flex-wrap items-center">
         <div className="flex gap-[18px] mt-3 items-center flex-wrap">
           <div className="min-w-[240px]">
-            <div className="text-xs text-gray-300/80 tracking-wide">
+            <div className="text-xs text-ui-muted tracking-wide">
               x（slider）
             </div>
             <input
@@ -77,7 +91,7 @@ export function HeaderControls({
             />
           </div>
           <div className="min-w-[240px]">
-            <div className="text-xs text-gray-300/80 tracking-wide">
+            <div className="text-xs text-ui-muted tracking-wide">
               x + h（slider）
             </div>
             <input
@@ -93,51 +107,43 @@ export function HeaderControls({
         </div>
 
         <div>
-          <div className="text-xs text-gray-300/80 tracking-wide">x</div>
-          <div className="text-base text-gray-200 tabular-nums">
-            {fmt(x, 4)}
+          <div className="text-xs text-ui-muted tracking-wide">x</div>
+          <div className="text-base text-ui-base tabular-nums">{fmt(x, 1)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-ui-muted tracking-wide">x+h</div>
+          <div className="text-base text-ui-base tabular-nums">
+            {fmt(xh, 1)}
           </div>
         </div>
         <div>
-          <div className="text-xs text-gray-300/80 tracking-wide">x+h</div>
-          <div className="text-base text-gray-200 tabular-nums">
-            {fmt(xh, 4)}
+          <div className="text-xs text-ui-muted tracking-wide">f(x)</div>
+          <div className="text-base text-ui-base tabular-nums">
+            {fmt(fx, 1)}
           </div>
         </div>
         <div>
-          <div className="text-xs text-gray-300/80 tracking-wide">h</div>
-          <div className="text-base text-gray-200 tabular-nums">
-            {h.toExponential(2)}
+          <div className="text-xs text-ui-muted tracking-wide">f(x+h)</div>
+          <div className="text-base text-ui-base tabular-nums">
+            {fmt(fxh, 1)}
           </div>
         </div>
         <div>
-          <div className="text-xs text-gray-300/80 tracking-wide">f(x)</div>
-          <div className="text-base text-gray-200 tabular-nums">
-            {fmt(fx, 4)}
+          <div className="text-xs text-ui-muted tracking-wide">差分</div>
+          <div className="text-base text-ui-base tabular-nums">
+            {fmt(secant, 1)}
           </div>
         </div>
         <div>
-          <div className="text-xs text-gray-300/80 tracking-wide">f(x+h)</div>
-          <div className="text-base text-gray-200 tabular-nums">
-            {fmt(fxh, 4)}
+          <div className="text-xs text-ui-muted tracking-wide">f'(x)</div>
+          <div className="text-base text-ui-base tabular-nums">
+            {fmt(dfx, 1)}
           </div>
         </div>
         <div>
-          <div className="text-xs text-gray-300/80 tracking-wide">差分商</div>
-          <div className="text-base text-gray-200 tabular-nums">
-            {fmt(secant, 4)}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs text-gray-300/80 tracking-wide">f'(x)</div>
-          <div className="text-base text-gray-200 tabular-nums">
-            {fmt(dfx, 4)}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs text-gray-300/80 tracking-wide">f'(x+h)</div>
-          <div className="text-base text-gray-200 tabular-nums">
-            {fmt(dfxh, 4)}
+          <div className="text-xs text-ui-muted tracking-wide">f'(x+h)</div>
+          <div className="text-base text-ui-base tabular-nums">
+            {fmt(dfxh, 1)}
           </div>
         </div>
       </div>
