@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { create, all } from "mathjs";
 import {
   LAYOUT,
@@ -15,10 +15,11 @@ import {
 
 const math = create(all);
 const { W, H1, H2, pad } = LAYOUT;
-const BASE_X_MIN = LAYOUT.xMin;
-const BASE_X_MAX = LAYOUT.xMax;
-const ZOOM_MIN = 0.25;
-const ZOOM_MAX = 4;
+const X_SPAN_MIN = 2;
+const X_SPAN_MAX = 20;
+const DEFAULT_X_SPAN = 7;
+const PAN_X_FACTOR = 0.45;
+const PAN_Y_FACTOR = 0.45;
 
 type TermType = "x4" | "x3" | "x2" | "x" | "const";
 
@@ -190,10 +191,23 @@ export default function CustomFunction() {
   const [pendingCoef, setPendingCoef] = useState("");
   const [xValue, setXValue] = useState(0.6);
   const [xInputStr, setXInputStr] = useState("0.6");
-  const [zoom, setZoom] = useState(1);
+  const [xSpan, setXSpan] = useState(DEFAULT_X_SPAN);
+  const [panXF, setPanXF] = useState(0);
+  const [panYF, setPanYF] = useState(0);
+  const [panXD, setPanXD] = useState(0);
+  const [panYD, setPanYD] = useState(0);
+  const panning = useRef(false);
+  const lastPan = useRef({ x: 0, y: 0 });
 
-  const xMin = BASE_X_MIN / zoom;
-  const xMax = BASE_X_MAX / zoom;
+  const xMinF = panXF - xSpan / 2;
+  const xMaxF = panXF + xSpan / 2;
+  const xMinD = panXD - xSpan / 2;
+  const xMaxD = panXD + xSpan / 2;
+
+  const xMinClamp = Math.max(xMinF, xMinD);
+  const xMaxClamp = Math.min(xMaxF, xMaxD);
+  const xMin = xMinClamp <= xMaxClamp ? xMinClamp : xMinF;
+  const xMax = xMinClamp <= xMaxClamp ? xMaxClamp : xMaxF;
 
   useEffect(() => {
     setXValue((v) => {
@@ -205,6 +219,57 @@ export default function CustomFunction() {
 
   const exprString = useMemo(() => termsToExpr(terms), [terms]);
   const parsed = useMemo(() => parseExpr(exprString), [exprString]);
+
+  // まず描画し、その後極値があればその部分を自動表示（パッと見で形が分かるように拡大）
+  useEffect(() => {
+    if (!parsed.ok || !parsed.df) return;
+    const { f, df } = parsed;
+    const searchMin = -8;
+    const searchMax = 8;
+    const n = 200;
+    const critical: number[] = [];
+    let prev = df(searchMin);
+    for (let i = 1; i <= n; i++) {
+      const x = searchMin + (searchMax - searchMin) * (i / n);
+      const v = df(x);
+      if (!Number.isFinite(v)) continue;
+      if (prev * v <= 0) critical.push(x - (searchMax - searchMin) / (2 * n));
+      prev = v;
+    }
+    if (critical.length === 0) return;
+    const padX = 0.5;
+    const xLo = Math.min(...critical) - padX;
+    const xHi = Math.max(...critical) + padX;
+    const sampleN = 80;
+    let yLo = f(critical[0]);
+    let yHi = yLo;
+    for (let i = 0; i <= sampleN; i++) {
+      const xx = xLo + (xHi - xLo) * (i / sampleN);
+      try {
+        const yy = f(xx);
+        if (Number.isFinite(yy)) {
+          yLo = Math.min(yLo, yy);
+          yHi = Math.max(yHi, yy);
+        }
+      } catch {
+        // skip
+      }
+    }
+    const bboxW = xHi - xLo;
+    const bboxH = Math.max(yHi - yLo, bboxW * 0.2);
+    const aspect = (H1 - pad * 2) / (W - pad * 2);
+    const fitXSpan = Math.max(bboxW, bboxH / aspect) * 1.05;
+    let newXSpan = Math.max(X_SPAN_MIN, Math.min(X_SPAN_MAX, fitXSpan));
+    if (newXSpan <= 2.5) newXSpan = 2;
+    else if (newXSpan <= 3.5) newXSpan = 3;
+    else if (newXSpan <= 4.5) newXSpan = 4;
+    else if (newXSpan <= 5.5) newXSpan = 5;
+    else if (newXSpan <= 6.5) newXSpan = 6;
+    else newXSpan = Math.min(8, Math.round(newXSpan));
+    setXSpan(newXSpan);
+    setPanYF((yLo + yHi) / 2);
+    setPanYD((yLo + yHi) / 2);
+  }, [exprString]);
 
   const addTerm = () => {
     if (pendingTerm === null) return;
@@ -247,18 +312,23 @@ export default function CustomFunction() {
     setPendingCoef("");
     setXValue(0);
     setXInputStr("0");
+    setXSpan(DEFAULT_X_SPAN);
+    setPanXF(0);
+    setPanYF(0);
+    setPanXD(0);
+    setPanYD(0);
   };
 
-  const zoomIn = () => setZoom((z) => Math.min(ZOOM_MAX, z * 1.15));
-  const zoomOut = () => setZoom((z) => Math.max(ZOOM_MIN, z / 1.15));
-  const zoomReset = () => setZoom(1);
+  const xSpanIn = () => setXSpan((s) => Math.min(X_SPAN_MAX, s * 1.2));
+  const xSpanOut = () => setXSpan((s) => Math.max(X_SPAN_MIN, s / 1.2));
+  const xSpanReset = () => setXSpan(DEFAULT_X_SPAN);
 
   const yRangeF = useMemo(() => {
     if (!parsed.ok) return { min: -1, max: 1 };
     const { f } = parsed;
     const vals: number[] = [];
     for (let i = 0; i <= 500; i++) {
-      const xx = xMin + (xMax - xMin) * (i / 500);
+      const xx = xMinF + (xMaxF - xMinF) * (i / 500);
       try {
         vals.push(f(xx));
       } catch {
@@ -269,15 +339,18 @@ export default function CustomFunction() {
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const m = (max - min) * 0.18 + 0.8;
-    return { min: min - m, max: max + m };
-  }, [parsed, xMin, xMax]);
+    const raw = { min: min - m, max: max + m };
+    const baseSpan = ((H1 - pad * 2) * (xMaxF - xMinF)) / (W - pad * 2);
+    const center = (raw.min + raw.max) / 2 + panYF;
+    return { min: center - baseSpan / 2, max: center + baseSpan / 2 };
+  }, [parsed, xMinF, xMaxF, panYF]);
 
   const yRangeD = useMemo(() => {
     if (!parsed.ok) return { min: -1, max: 1 };
     const { df } = parsed;
     const vals: number[] = [];
     for (let i = 0; i <= 500; i++) {
-      const xx = xMin + (xMax - xMin) * (i / 500);
+      const xx = xMinD + (xMaxD - xMinD) * (i / 500);
       try {
         vals.push(df(xx));
       } catch {
@@ -288,11 +361,16 @@ export default function CustomFunction() {
     const min = Math.min(...vals);
     const max = Math.max(...vals);
     const m = (max - min) * 0.22 + 0.8;
-    return { min: min - m, max: max + m };
-  }, [parsed, xMin, xMax]);
+    const raw = { min: min - m, max: max + m };
+    const baseSpan = ((H2 - pad * 2) * (xMaxD - xMinD)) / (W - pad * 2);
+    const center = (raw.min + raw.max) / 2 + panYD;
+    return { min: center - baseSpan / 2, max: center + baseSpan / 2 };
+  }, [parsed, xMinD, xMaxD, panYD]);
 
-  const sx = (v: number, width: number) =>
-    pad + ((v - xMin) / (xMax - xMin)) * (width - pad * 2);
+  const sxF = (v: number, width: number) =>
+    pad + ((v - xMinF) / (xMaxF - xMinF)) * (width - pad * 2);
+  const sxD = (v: number, width: number) =>
+    pad + ((v - xMinD) / (xMaxD - xMinD)) * (width - pad * 2);
 
   const syF = (v: number) =>
     pad +
@@ -307,32 +385,32 @@ export default function CustomFunction() {
     const { f } = parsed;
     const pts: [number, number][] = [];
     for (let i = 0; i <= 700; i++) {
-      const xx = xMin + (xMax - xMin) * (i / 700);
+      const xx = xMinF + (xMaxF - xMinF) * (i / 700);
       try {
-        pts.push([sx(xx, W), syF(f(xx))]);
+        pts.push([sxF(xx, W), syF(f(xx))]);
       } catch {
         // skip
       }
     }
     return toPath(pts);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- syF/sx recreated each render
-  }, [parsed, xMin, xMax]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- syF/sxF recreated each render
+  }, [parsed, xMinF, xMaxF]);
 
   const curveD = useMemo(() => {
     if (!parsed.ok) return "";
     const { df } = parsed;
     const pts: [number, number][] = [];
     for (let i = 0; i <= 700; i++) {
-      const xx = xMin + (xMax - xMin) * (i / 700);
+      const xx = xMinD + (xMaxD - xMinD) * (i / 700);
       try {
-        pts.push([sx(xx, W), syD(df(xx))]);
+        pts.push([sxD(xx, W), syD(df(xx))]);
       } catch {
         // skip
       }
     }
     return toPath(pts);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- syD/sx recreated each render
-  }, [parsed, xMin, xMax]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- syD/sxD recreated each render
+  }, [parsed, xMinD, xMaxD]);
 
   const fx = parsed.ok
     ? (() => {
@@ -353,7 +431,8 @@ export default function CustomFunction() {
       })()
     : NaN;
 
-  const xPx = sx(xValue, W);
+  const xPxF = sxF(xValue, W);
+  const xPxD = sxD(xValue, W);
   const yF = parsed.ok
     ? (() => {
         try {
@@ -666,57 +745,83 @@ export default function CustomFunction() {
           <div className="p-5 bg-limitdiff-panel space-y-4">
             {parsed.ok && curveF ? (
               <>
-                <div className="flex flex-wrap items-center justify-end gap-3">
-                  <span className="text-sm text-ui-muted font-medium">
-                    拡大・縮小:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={zoomOut}
-                    disabled={zoom <= ZOOM_MIN}
+                <div className="flex flex-wrap items-center justify-end gap-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-sm text-ui-muted font-medium">x軸の幅:</span>
+                    <button
+                      type="button"
+                      onClick={xSpanOut}
+                      disabled={xSpan <= X_SPAN_MIN}
                       className="rounded-xl py-2 px-4 text-sm border border-white/20 bg-white/8 text-ui-base disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 hover:border-white/25 transition-all duration-200"
-                  >
-                    −
-                  </button>
-                  <input
-                    type="range"
-                    min={ZOOM_MIN}
-                    max={ZOOM_MAX}
-                    step={0.05}
-                    value={zoom}
-                    onChange={(e) => setZoom(Number(e.target.value))}
-                    className="w-32 h-1.5 rounded-lg cursor-pointer"
-                  />
-                  <button
-                    type="button"
-                    onClick={zoomIn}
-                    disabled={zoom >= ZOOM_MAX}
+                    >
+                      −
+                    </button>
+                    <input
+                      type="range"
+                      min={X_SPAN_MIN}
+                      max={X_SPAN_MAX}
+                      step={0.5}
+                      value={xSpan}
+                      onChange={(e) => setXSpan(Number(e.target.value))}
+                      className="w-32 h-1.5 rounded-lg cursor-pointer"
+                    />
+                    <button
+                      type="button"
+                      onClick={xSpanIn}
+                      disabled={xSpan >= X_SPAN_MAX}
                       className="rounded-xl py-2 px-4 text-sm border border-white/20 bg-white/8 text-ui-base disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 hover:border-white/25 transition-all duration-200"
-                  >
-                    +
-                  </button>
-                  <button
-                    type="button"
-                    onClick={zoomReset}
-                    className="rounded-xl py-2 px-4 text-sm border border-white/20 bg-white/8 text-ui-base hover:bg-accent-cyan/10 hover:border-accent-cyan/30 hover:text-accent-cyan transition-all duration-200"
-                  >
-                    1:1
-                  </button>
-                  <span className="text-sm text-ui-muted tabular-nums w-12 text-center font-medium">
-                    {zoom.toFixed(1)}×
-                  </span>
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={xSpanReset}
+                      className="rounded-xl py-2 px-4 text-sm border border-white/20 bg-white/8 text-ui-base hover:bg-accent-cyan/10 hover:border-accent-cyan/30 hover:text-accent-cyan transition-all duration-200"
+                    >
+                      1:1
+                    </button>
+                    <span className="text-sm text-ui-muted tabular-nums w-12 text-center font-medium">
+                      {xSpan.toFixed(1)}
+                    </span>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent p-4 overflow-x-auto shadow-inner">
-                  <svg width={W} height={H1} className="block">
+                <p className="text-xs text-ui-dim text-right">グラフ内をドラッグまたはスワイプで移動</p>
+                <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent p-4 overflow-hidden shadow-inner">
+                  <svg
+                    width={W}
+                    height={H1}
+                    className="block touch-none cursor-grab active:cursor-grabbing"
+                    onPointerDown={(e) => {
+                      const tag = (e.target as SVGElement).tagName;
+                      if (tag !== "circle" && tag !== "line") {
+                        panning.current = true;
+                        lastPan.current = { x: e.clientX, y: e.clientY };
+                      }
+                    }}
+                    onPointerMove={(e) => {
+                      if (!panning.current) return;
+                      e.preventDefault();
+                      const dx = e.clientX - lastPan.current.x;
+                      const dy = e.clientY - lastPan.current.y;
+                      lastPan.current = { x: e.clientX, y: e.clientY };
+                      const dxData = (dx / (W - pad * 2)) * (xMaxF - xMinF) * PAN_X_FACTOR;
+                      const dyData = -(dy / (H1 - pad * 2)) * (yRangeF.max - yRangeF.min) * PAN_Y_FACTOR;
+                      setPanXF((p) => p - dxData);
+                      setPanYF((p) => p - dyData);
+                    }}
+                    onPointerUp={() => { panning.current = false; }}
+                    onPointerLeave={() => { panning.current = false; }}
+                  >
+                    <rect width={W} height={H1} fill="transparent" style={{ cursor: "grab" }} />
                     <GridLines
                       width={W}
                       height={H1}
                       pad={pad}
-                      xMin={xMin}
-                      xMax={xMax}
+                      xMin={xMinF}
+                      xMax={xMaxF}
                       yMin={yRangeF.min}
                       yMax={yRangeF.max}
-                      sx={sx}
+                      sx={sxF}
                       sy={syF}
                       strokeGrid={strokeGrid}
                       strokeAxis={strokeAxis}
@@ -731,18 +836,18 @@ export default function CustomFunction() {
                       }}
                     />
                     <line
-                      x1={xPx}
+                      x1={xPxF}
                       y1={syF(yF)}
-                      x2={xPx}
+                      x2={xPxF}
                       y2={H1 - pad}
                       stroke={colors.x}
                       strokeWidth={1.5}
                       strokeDasharray="4 2"
                       opacity={0.8}
                     />
-                    <circle cx={xPx} cy={syF(yF)} r={6} fill={colors.x} />
+                    <circle cx={xPxF} cy={syF(yF)} r={6} fill={colors.x} />
                     <text
-                      x={xPx + 10}
+                      x={xPxF + 10}
                       y={syF(yF) + 4}
                       textAnchor="start"
                       style={{
@@ -761,17 +866,42 @@ export default function CustomFunction() {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent p-4 overflow-x-auto shadow-inner">
-                  <svg width={W} height={H2} className="block">
+                <div className="mt-4 rounded-2xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent p-4 overflow-hidden shadow-inner">
+                  <svg
+                    width={W}
+                    height={H2}
+                    className="block touch-none cursor-grab active:cursor-grabbing"
+                    onPointerDown={(e) => {
+                      const tag = (e.target as SVGElement).tagName;
+                      if (tag !== "circle" && tag !== "line") {
+                        panning.current = true;
+                        lastPan.current = { x: e.clientX, y: e.clientY };
+                      }
+                    }}
+                    onPointerMove={(e) => {
+                      if (!panning.current) return;
+                      e.preventDefault();
+                      const dx = e.clientX - lastPan.current.x;
+                      const dy = e.clientY - lastPan.current.y;
+                      lastPan.current = { x: e.clientX, y: e.clientY };
+                      const dxData = (dx / (W - pad * 2)) * (xMaxD - xMinD) * PAN_X_FACTOR;
+                      const dyData = -(dy / (H2 - pad * 2)) * (yRangeD.max - yRangeD.min) * PAN_Y_FACTOR;
+                      setPanXD((p) => p - dxData);
+                      setPanYD((p) => p - dyData);
+                    }}
+                    onPointerUp={() => { panning.current = false; }}
+                    onPointerLeave={() => { panning.current = false; }}
+                  >
+                    <rect width={W} height={H2} fill="transparent" style={{ cursor: "grab" }} />
                     <GridLines
                       width={W}
                       height={H2}
                       pad={pad}
-                      xMin={xMin}
-                      xMax={xMax}
+                      xMin={xMinD}
+                      xMax={xMaxD}
                       yMin={yRangeD.min}
                       yMax={yRangeD.max}
-                      sx={sx}
+                      sx={sxD}
                       sy={syD}
                       strokeGrid={strokeGrid}
                       strokeAxis={strokeAxis}
@@ -786,18 +916,18 @@ export default function CustomFunction() {
                       }}
                     />
                     <line
-                      x1={xPx}
+                      x1={xPxD}
                       y1={syD(yD)}
-                      x2={xPx}
+                      x2={xPxD}
                       y2={H2 - pad}
                       stroke={colors.x}
                       strokeWidth={1.5}
                       strokeDasharray="4 2"
                       opacity={0.8}
                     />
-                    <circle cx={xPx} cy={syD(yD)} r={6} fill={colors.x} />
+                    <circle cx={xPxD} cy={syD(yD)} r={6} fill={colors.x} />
                     <text
-                      x={xPx + 10}
+                      x={xPxD + 10}
                       y={syD(yD) + 4}
                       textAnchor="start"
                       style={{

@@ -21,6 +21,7 @@ type Props = {
   onPointerLeave: () => void;
   onMouseDownX: () => void;
   onMouseDownXh: () => void;
+  onPointerDownBackground?: (e: React.PointerEvent) => void;
 };
 
 export function FunctionGraph({
@@ -43,17 +44,25 @@ export function FunctionGraph({
   onPointerLeave,
   onMouseDownX,
   onMouseDownXh,
+  onPointerDownBackground,
 }: Props) {
   return (
-    <div className="rounded-[18px] border border-white/15 bg-[rgba(15,23,42,0.5)] p-3 overflow-x-auto">
+    <div className="rounded-[18px] border border-white/15 bg-[rgba(15,23,42,0.5)] p-3 overflow-hidden">
       <svg
         width={width}
         height={height}
+        onPointerDown={onPointerDownBackground}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerLeave}
-        className="block touch-none"
+        className="block touch-none cursor-grab active:cursor-grabbing"
       >
+        <rect
+          width={width}
+          height={height}
+          fill="transparent"
+          style={{ pointerEvents: "none" }}
+        />
         <GridLines
           width={width}
           height={height}
@@ -107,7 +116,10 @@ export function FunctionGraph({
           cy={syF(fx)}
           r={7}
           fill={colors.x}
-          onPointerDown={onMouseDownX}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onMouseDownX();
+          }}
           className="cursor-grab"
         />
         <circle
@@ -115,7 +127,10 @@ export function FunctionGraph({
           cy={syF(fxh)}
           r={7}
           fill={colors.xh}
-          onPointerDown={onMouseDownXh}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onMouseDownXh();
+          }}
           className="cursor-grab"
         />
 

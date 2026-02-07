@@ -20,6 +20,8 @@ const TICK_LABEL_STYLE: React.CSSProperties = {
   fontFamily: "system-ui, sans-serif",
 };
 
+// x軸・y軸とも整数のみ表示する（小数目盛りは出さない）
+
 export function GridLines({
   width,
   height,
@@ -103,20 +105,18 @@ export function GridLines({
         textAnchor="middle"
         style={TICK_LABEL_STYLE}
       >
-        {Math.abs(x)}
+        {x}
       </text>,
     );
   }
 
   const axisX = xMin <= 0 && 0 <= xMax ? sx(0, width) : pad;
-  const yStep = (yMax - yMin) / 4;
-  for (let i = 0; i <= 4; i++) {
-    const y = yMin + i * yStep;
+  for (let y = Math.ceil(yMin); y <= Math.floor(yMax); y++) {
     const py = sy(y);
     if (py < pad || py > height - pad) continue;
     lines.push(
       <line
-        key={`ty-${i}`}
+        key={`ty-${y}`}
         x1={axisX}
         y1={py}
         x2={axisX - tickLen}
@@ -127,13 +127,13 @@ export function GridLines({
     );
     lines.push(
       <text
-        key={`ty-label-${i}`}
+        key={`ty-label-${y}`}
         x={axisX - 6}
         y={py + 4}
         textAnchor="end"
         style={TICK_LABEL_STYLE}
       >
-        {Math.round(Math.abs(y))}
+        {y}
       </text>,
     );
   }
