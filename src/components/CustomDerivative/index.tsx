@@ -14,14 +14,36 @@ import {
 } from "../../shared";
 
 const math = create(all);
-const { W, H1, H2, pad } = LAYOUT;
+
+function useResponsiveLayout() {
+  const [size, setSize] = useState(() =>
+    typeof window !== "undefined"
+      ? { width: window.innerWidth, height: window.innerHeight }
+      : { width: 780, height: 800 }
+  );
+  useEffect(() => {
+    const onResize = () =>
+      setSize({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const isPortrait = size.height < 700 || size.width < 640;
+  if (isPortrait) {
+    return {
+      W: Math.min(780, size.width - 24),
+      H1: 180,
+      H2: 140,
+      pad: 32,
+    };
+  }
+  return { W: LAYOUT.W, H1: LAYOUT.H1, H2: LAYOUT.H2, pad: LAYOUT.pad };
+}
 const X_SPAN_MIN = 2;
 const X_SPAN_MAX = 40;
 /** 自分で導関数を指定（３時間数）のときの初期 x 幅 */
 const DEFAULT_X_SPAN = 12.4;
 const Y_SPAN_MIN = 0.5;
 const Y_SPAN_MAX = 500;
-const PAN_FACTOR = 0.5;
 
 type TermType = "x4" | "x3" | "x2" | "x" | "const";
 
@@ -251,6 +273,7 @@ function parseFromTerms(terms: Term[], integralConst: number): ParsedState {
 type InputMode = "f" | "df";
 
 export default function CustomDerivative() {
+  const { W, H1, H2, pad } = useResponsiveLayout();
   const [inputMode, setInputMode] = useState<InputMode>("df");
   const [termsF, setTermsF] = useState<Term[]>([{ type: "x2", coef: 0 }]);
   const [terms, setTerms] = useState<Term[]>([{ type: "x", coef: 0 }]);
@@ -269,8 +292,6 @@ export default function CustomDerivative() {
   const [panYF, setPanYF] = useState(0);
   const [panXD, setPanXD] = useState(0);
   const [panYD, setPanYD] = useState(0);
-  const panning = useRef(false);
-  const lastPan = useRef({ x: 0, y: 0 });
   const ySpanRafRef = useRef<number | undefined>(undefined);
   const ySpanDoneFRef = useRef(false);
   const ySpanDoneDRef = useRef(false);
@@ -829,8 +850,8 @@ export default function CustomDerivative() {
                   </button>
                 ))}
                 {pendingTerm !== null && (
-                  <span className="flex items-center gap-1.5 flex-wrap ml-2">
-                    <span className="text-xs text-ui-muted shrink-0">
+                  <div className="fixed inset-x-0 bottom-0 z-20 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-slate-900/98 backdrop-blur border-t border-white/10 rounded-t-2xl shadow-[0_-4px_24px_rgba(0,0,0,0.3)] max-h-[70vh] overflow-y-auto md:relative md:inset-auto md:z-auto md:p-0 md:pb-0 md:bg-transparent md:backdrop-blur-none md:border-0 md:rounded-none md:shadow-none md:max-h-none md:overflow-visible flex items-center gap-1.5 flex-wrap md:ml-2">
+                    <span className="text-xs text-ui-muted shrink-0 w-full md:w-auto mb-1 md:mb-0">
                       {pendingTerm === "const" ? "定数" : "係数"}:
                     </span>
                     <input
@@ -974,7 +995,7 @@ export default function CustomDerivative() {
                     >
                       キャンセル
                     </button>
-                  </span>
+                  </div>
                 )}
               </div>
 
@@ -1140,55 +1161,19 @@ export default function CustomDerivative() {
                   </div>
                 </div>
                 <p className="text-xs text-ui-dim text-right">
-                  グラフ内をドラッグまたはスワイプで移動
+                  関数は固定表示（x軸の幅スライダーで表示範囲を変更）
                 </p>
                 <div className="rounded-[18px] border border-white/15 bg-[rgba(15,23,42,0.5)] p-3 overflow-hidden">
                   <svg
                     ref={svgFRef}
                     width={W}
                     height={H1}
-                    className="block touch-none cursor-grab active:cursor-grabbing"
-                    onPointerDown={(e) => {
-                      if (panning.current) return;
-                      if ((e.target as SVGElement).tagName === "line") return;
-                      if ((e.target as SVGElement).tagName === "circle") return;
-                      panning.current = true;
-                      lastPan.current = { x: e.clientX, y: e.clientY };
-                      (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
-                    }}
-                    onPointerMove={(e) => {
-                      if (!panning.current) return;
-                      e.preventDefault();
-                      const dx = e.clientX - lastPan.current.x;
-                      const dy = e.clientY - lastPan.current.y;
-                      lastPan.current = { x: e.clientX, y: e.clientY };
-                      const drawW = W - pad * 2;
-                      const drawH = H1 - pad * 2;
-                      const dxData = (dx / drawW) * (xMaxF - xMinF) * PAN_FACTOR;
-                      setPanXF((p) => p - dxData);
-                      setPanXD((p) => p - dxData);
-                      const dyData =
-                        -(dy / drawH) *
-                        (yRangeF.max - yRangeF.min) *
-                        PAN_FACTOR;
-                      setPanYF((p) => p - dyData);
-                      setPanYD((p) => p - dyData);
-                    }}
-                    onPointerUp={(e) => {
-                      (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId);
-                      panning.current = false;
-                    }}
-                    onPointerLeave={(e) => {
-                      if (panning.current)
-                        (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId);
-                      panning.current = false;
-                    }}
+                    className="block touch-none cursor-default"
                   >
                     <rect
                       width={W}
                       height={H1}
                       fill="transparent"
-                      style={{ cursor: "grab" }}
                     />
                     <GridLines
                       width={W}
@@ -1245,48 +1230,12 @@ export default function CustomDerivative() {
                     ref={svgDRef}
                     width={W}
                     height={H2}
-                    className="block touch-none cursor-grab active:cursor-grabbing"
-                    onPointerDown={(e) => {
-                      if (panning.current) return;
-                      if ((e.target as SVGElement).tagName === "line") return;
-                      if ((e.target as SVGElement).tagName === "circle") return;
-                      panning.current = true;
-                      lastPan.current = { x: e.clientX, y: e.clientY };
-                      (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
-                    }}
-                    onPointerMove={(e) => {
-                      if (!panning.current) return;
-                      e.preventDefault();
-                      const dx = e.clientX - lastPan.current.x;
-                      const dy = e.clientY - lastPan.current.y;
-                      lastPan.current = { x: e.clientX, y: e.clientY };
-                      const drawW = W - pad * 2;
-                      const drawH = H2 - pad * 2;
-                      const dxData = (dx / drawW) * (xMaxD - xMinD) * PAN_FACTOR;
-                      setPanXF((p) => p - dxData);
-                      setPanXD((p) => p - dxData);
-                      const dyData =
-                        -(dy / drawH) *
-                        (yRangeD.max - yRangeD.min) *
-                        PAN_FACTOR;
-                      setPanYF((p) => p - dyData);
-                      setPanYD((p) => p - dyData);
-                    }}
-                    onPointerUp={(e) => {
-                      (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId);
-                      panning.current = false;
-                    }}
-                    onPointerLeave={(e) => {
-                      if (panning.current)
-                        (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId);
-                      panning.current = false;
-                    }}
+                    className="block touch-none cursor-default"
                   >
                     <rect
                       width={W}
                       height={H2}
                       fill="transparent"
-                      style={{ cursor: "grab" }}
                     />
                     <GridLines
                       width={W}
