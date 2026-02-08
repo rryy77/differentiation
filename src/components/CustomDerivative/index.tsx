@@ -16,10 +16,12 @@ import {
 const math = create(all);
 const { W, H1, H2, pad } = LAYOUT;
 const X_SPAN_MIN = 2;
-const X_SPAN_MAX = 20;
-const DEFAULT_X_SPAN = 7;
-const PAN_X_FACTOR = 0.45;
-const PAN_Y_FACTOR = 0.45;
+const X_SPAN_MAX = 40;
+/** 自分で導関数を指定（３時間数）のときの初期 x 幅 */
+const DEFAULT_X_SPAN = 12.4;
+const Y_SPAN_MIN = 0.5;
+const Y_SPAN_MAX = 500;
+const PAN_FACTOR = 0.5;
 
 type TermType = "x4" | "x3" | "x2" | "x" | "const";
 
@@ -121,6 +123,16 @@ function termsToIntegralExpr(terms: Term[], c: number): string {
   return parts.join(" + ").replace(/\s\+\s-/g, " - ");
 }
 
+/** f'(x) の表示用：* と ^ を除去、sqrt(n)→√n（分数は FormulaText で縦書き表示） */
+function derivativeToDisplay(str: string): string {
+  return str
+    .replace(/\*/g, "")
+    .replace(/\^2/g, "²")
+    .replace(/\^3/g, "³")
+    .replace(/\^4/g, "⁴")
+    .replace(/sqrt\((\d+)\)/g, "√$1");
+}
+
 /** f(x) の表示用：* と ^ を除去、sqrt(n)→√n（分数は FormulaText で縦書き表示） */
 function integralToDisplay(str: string): string {
   return str
@@ -164,7 +176,10 @@ function toMathJsFormat(s: string): string {
 }
 
 function mergeAndSortTerms(terms: Term[]): Term[] {
-  const byType: Record<TermType, { coef: number; coefStr?: string; nonzeroCount: number }> = {
+  const byType: Record<
+    TermType,
+    { coef: number; coefStr?: string; nonzeroCount: number }
+  > = {
     x4: { coef: 0, nonzeroCount: 0 },
     x3: { coef: 0, nonzeroCount: 0 },
     x2: { coef: 0, nonzeroCount: 0 },
@@ -196,11 +211,25 @@ type ParsedState =
     }
   | { ok: false; error: string };
 
+/** f(x) の式文字列から f と f' を構築（自分で関数を設定と同じ） */
+function parseExpr(exprString: string): ParsedState {
+  const trimmed = exprString.trim();
+  if (!trimmed) return { ok: false, error: "式を入力してください" };
+  try {
+    const node = math.parse(trimmed);
+    const derivNode = math.derivative(node, "x");
+    const dfStr = derivNode.toString();
+    const f = (x: number) => (node.evaluate({ x }) as number) ?? NaN;
+    const df = (x: number) => (derivNode.evaluate({ x }) as number) ?? NaN;
+    return { ok: true, f, df, fStr: trimmed, dfStr };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: message };
+  }
+}
+
 /** 項リストから f'(x) と f(x)=∫f'(x)dx を構築 */
-function parseFromTerms(
-  terms: Term[],
-  integralConst: number
-): ParsedState {
+function parseFromTerms(terms: Term[], integralConst: number): ParsedState {
   const dfExprString = termsToExpr(terms);
   const trimmed = dfExprString.trim();
   if (!trimmed) return { ok: false, error: "f'(x) の項を追加してください" };
@@ -219,7 +248,11 @@ function parseFromTerms(
   }
 }
 
+type InputMode = "f" | "df";
+
 export default function CustomDerivative() {
+  const [inputMode, setInputMode] = useState<InputMode>("df");
+  const [termsF, setTermsF] = useState<Term[]>([{ type: "x2", coef: 0 }]);
   const [terms, setTerms] = useState<Term[]>([{ type: "x", coef: 0 }]);
   const [integralConst, setIntegralConst] = useState(0);
   const [integralConstStr, setIntegralConstStr] = useState("0");
@@ -228,12 +261,30 @@ export default function CustomDerivative() {
   const [xValue, setXValue] = useState(0.6);
   const [xInputStr, setXInputStr] = useState("0.6");
   const [xSpan, setXSpan] = useState(DEFAULT_X_SPAN);
+  const [ySpanF, setYSpanF] = useState(10);
+  const [ySpanD, setYSpanD] = useState(10);
+  const [displayYSpanF, setDisplayYSpanF] = useState(10);
+  const [displayYSpanD, setDisplayYSpanD] = useState(10);
   const [panXF, setPanXF] = useState(0);
   const [panYF, setPanYF] = useState(0);
   const [panXD, setPanXD] = useState(0);
   const [panYD, setPanYD] = useState(0);
   const panning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
+  const ySpanRafRef = useRef<number | undefined>(undefined);
+  const ySpanDoneFRef = useRef(false);
+  const ySpanDoneDRef = useRef(false);
+  const svgFRef = useRef<SVGSVGElement>(null);
+  const svgDRef = useRef<SVGSVGElement>(null);
+  const onWheelZoomRef = useRef<(e: React.WheelEvent<SVGSVGElement>) => void>(() => {});
+  const onPinchZoomRef = useRef<(e: React.TouchEvent<SVGSVGElement>, type: "start" | "move" | "end") => void>(() => {});
+  const pinchRef = useRef<{
+    distance: number;
+    xSpan: number;
+    panXF: number;
+    centerX_data: number;
+    centerPx: number;
+  } | null>(null);
 
   const xMinF = panXF - xSpan / 2;
   const xMaxF = panXF + xSpan / 2;
@@ -253,10 +304,12 @@ export default function CustomDerivative() {
     });
   }, [xMin, xMax]);
 
-  const parsed = useMemo(
-    () => parseFromTerms(terms, integralConst),
-    [terms, integralConst]
-  );
+  const parsed = useMemo(() => {
+    if (inputMode === "f") {
+      return parseExpr(termsToExpr(termsF));
+    }
+    return parseFromTerms(terms, integralConst);
+  }, [inputMode, termsF, terms, integralConst]);
 
   // まず描画し、その後極値があればその部分を自動表示（パッと見で形が分かるように拡大）
   useEffect(() => {
@@ -298,16 +351,41 @@ export default function CustomDerivative() {
     const aspect = (H1 - pad * 2) / (W - pad * 2);
     const fitXSpan = Math.max(bboxW, bboxH / aspect) * 1.05;
     let newXSpan = Math.max(X_SPAN_MIN, Math.min(X_SPAN_MAX, fitXSpan));
-    if (newXSpan <= 2.5) newXSpan = 2;
-    else if (newXSpan <= 3.5) newXSpan = 3;
-    else if (newXSpan <= 4.5) newXSpan = 4;
-    else if (newXSpan <= 5.5) newXSpan = 5;
-    else if (newXSpan <= 6.5) newXSpan = 6;
-    else newXSpan = Math.min(8, Math.round(newXSpan));
+    newXSpan = Math.max(DEFAULT_X_SPAN, newXSpan);
     setXSpan(newXSpan);
-    setPanYF((yLo + yHi) / 2);
-    setPanYD((yLo + yHi) / 2);
-  }, [terms, integralConst]);
+    const centerX = (xLo + xHi) / 2;
+    setPanXF(centerX);
+    setPanXD(centerX);
+    const visibleXLo = centerX - newXSpan / 2;
+    const visibleXHi = centerX + newXSpan / 2;
+    let visibleYLo = f(visibleXLo);
+    let visibleYHi = visibleYLo;
+    for (let i = 0; i <= 100; i++) {
+      const xx = visibleXLo + (visibleXHi - visibleXLo) * (i / 100);
+      try {
+        const yy = f(xx);
+        if (Number.isFinite(yy)) {
+          visibleYLo = Math.min(visibleYLo, yy);
+          visibleYHi = Math.max(visibleYHi, yy);
+        }
+      } catch {
+        // skip
+      }
+    }
+    const visibleCenterY = (visibleYLo + visibleYHi) / 2;
+    setPanYF(visibleCenterY);
+    setPanYD(visibleCenterY);
+    const fitYSpan = Math.max(
+      (visibleYHi - visibleYLo) * 1.24,
+      ((H2 - pad * 2) * (visibleXHi - visibleXLo)) / (W - pad * 2)
+    );
+    const newYSpan = Math.max(
+      Y_SPAN_MIN,
+      Math.min(Y_SPAN_MAX, fitYSpan)
+    );
+    setYSpanF(newYSpan);
+    setYSpanD(newYSpan);
+  }, [inputMode, termsF, terms, integralConst]);
 
   const addTerm = () => {
     if (pendingTerm === null) return;
@@ -330,82 +408,252 @@ export default function CustomDerivative() {
             ? pendingCoef
             : undefined,
       };
-      setTerms((prev) => mergeAndSortTerms([...prev, newTerm]));
+      if (inputMode === "f") {
+        setTermsF((prev) => mergeAndSortTerms([...prev, newTerm]));
+      } else {
+        setTerms((prev) => mergeAndSortTerms([...prev, newTerm]));
+      }
     }
     setPendingTerm(null);
     setPendingCoef("");
   };
 
   const removeLastTerm = () => {
-    setTerms((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+    if (inputMode === "f") {
+      setTermsF((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+    } else {
+      setTerms((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+    }
   };
 
   const applyDescendingOrder = () => {
-    setTerms((prev) => mergeAndSortTerms(prev));
+    if (inputMode === "f") {
+      setTermsF((prev) => mergeAndSortTerms(prev));
+    } else {
+      setTerms((prev) => mergeAndSortTerms(prev));
+    }
   };
 
   const reset = () => {
-    setTerms([{ type: "x", coef: 0 }]);
-    setIntegralConst(0);
-    setIntegralConstStr("0");
+    if (inputMode === "f") {
+      setTermsF([{ type: "x2", coef: 0 }]);
+    } else {
+      setTerms([{ type: "x", coef: 0 }]);
+      setIntegralConst(0);
+      setIntegralConstStr("0");
+    }
     setPendingTerm(null);
     setPendingCoef("");
     setXValue(0);
     setXInputStr("0");
     setXSpan(DEFAULT_X_SPAN);
+    setYSpanF(10);
+    setYSpanD(10);
+    setDisplayYSpanF(10);
+    setDisplayYSpanD(10);
     setPanXF(0);
     setPanYF(0);
     setPanXD(0);
     setPanYD(0);
   };
 
-  const xSpanIn = () => setXSpan((s) => Math.min(X_SPAN_MAX, s * 1.2));
-  const xSpanOut = () => setXSpan((s) => Math.max(X_SPAN_MIN, s / 1.2));
+  const ZOOM_STEP = 1.4;
+  const xSpanIn = () => setXSpan((s) => Math.min(X_SPAN_MAX, s * ZOOM_STEP));
+  const xSpanOut = () => setXSpan((s) => Math.max(X_SPAN_MIN, s / ZOOM_STEP));
   const xSpanReset = () => setXSpan(DEFAULT_X_SPAN);
+
+  const onWheelZoom = (e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cursorPx = e.clientX - rect.left;
+    const drawW = W - pad * 2;
+    const cursorX_data = panXF - xSpan / 2 + ((cursorPx - pad) / drawW) * xSpan;
+    const factor = 1 + e.deltaY * 0.005;
+    const newXSpan = Math.max(X_SPAN_MIN, Math.min(X_SPAN_MAX, xSpan * factor));
+    const newPanX = cursorX_data + newXSpan * (0.5 - (cursorPx - pad) / drawW);
+    const scale = newXSpan / xSpan;
+    setXSpan(newXSpan);
+    setPanXF(newPanX);
+    setPanXD(newPanX);
+    setYSpanF((s) => Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, s * scale)));
+    setYSpanD((s) => Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, s * scale)));
+  };
+
+  const onPinchZoom = (
+    e: React.TouchEvent<SVGSVGElement>,
+    type: "start" | "move" | "end"
+  ) => {
+    const touches = e.touches;
+    if (type === "end" || touches.length < 2) {
+      pinchRef.current = null;
+      return;
+    }
+    if (touches.length !== 2) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px1 = touches[0].clientX - rect.left;
+    const px2 = touches[1].clientX - rect.left;
+    const centerPx = (px1 + px2) / 2;
+    const py1 = touches[0].clientY - rect.top;
+    const py2 = touches[1].clientY - rect.top;
+    const distance = Math.hypot(px2 - px1, py2 - py1) || 1;
+    const drawW = W - pad * 2;
+    if (type === "start") {
+      const centerX_data = panXF - xSpan / 2 + ((centerPx - pad) / drawW) * xSpan;
+      pinchRef.current = { distance, xSpan, panXF, centerX_data, centerPx };
+      return;
+    }
+    const prev = pinchRef.current;
+    if (!prev) return;
+    const zoomFactor = distance / prev.distance;
+    const newXSpan = Math.max(X_SPAN_MIN, Math.min(X_SPAN_MAX, prev.xSpan * zoomFactor));
+    const newPanX = prev.centerX_data + newXSpan * (0.5 - (centerPx - pad) / drawW);
+    const scale = newXSpan / prev.xSpan;
+    setXSpan(newXSpan);
+    setPanXF(newPanX);
+    setPanXD(newPanX);
+    setYSpanF((s) => Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, s * scale)));
+    setYSpanD((s) => Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, s * scale)));
+    pinchRef.current = { ...prev, distance, xSpan: newXSpan, panXF: newPanX };
+  };
+
+  onWheelZoomRef.current = onWheelZoom;
+  onPinchZoomRef.current = onPinchZoom;
+
+  useEffect(() => {
+    const elF = svgFRef.current;
+    if (!elF) return;
+    const onWheel = (e: WheelEvent) => {
+      onWheelZoomRef.current(e as unknown as React.WheelEvent<SVGSVGElement>);
+      e.preventDefault();
+    };
+    elF.addEventListener("wheel", onWheel, { passive: false });
+    return () => elF.removeEventListener("wheel", onWheel);
+  }, []);
+  useEffect(() => {
+    const elD = svgDRef.current;
+    if (!elD) return;
+    const onWheel = (e: WheelEvent) => {
+      onWheelZoomRef.current(e as unknown as React.WheelEvent<SVGSVGElement>);
+      e.preventDefault();
+    };
+    elD.addEventListener("wheel", onWheel, { passive: false });
+    return () => elD.removeEventListener("wheel", onWheel);
+  }, []);
+  useEffect(() => {
+    const elF = svgFRef.current;
+    if (!elF) return;
+    const start = (e: TouchEvent) => onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "start");
+    const move = (e: TouchEvent) => {
+      onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "move");
+      if (e.touches.length === 2) e.preventDefault();
+    };
+    const end = (e: TouchEvent) => onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "end");
+    elF.addEventListener("touchstart", start, { passive: true });
+    elF.addEventListener("touchmove", move, { passive: false });
+    elF.addEventListener("touchend", end, { passive: true });
+    elF.addEventListener("touchcancel", end, { passive: true });
+    return () => {
+      elF.removeEventListener("touchstart", start);
+      elF.removeEventListener("touchmove", move);
+      elF.removeEventListener("touchend", end);
+      elF.removeEventListener("touchcancel", end);
+    };
+  }, []);
+  useEffect(() => {
+    const elD = svgDRef.current;
+    if (!elD) return;
+    const start = (e: TouchEvent) => onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "start");
+    const move = (e: TouchEvent) => {
+      onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "move");
+      if (e.touches.length === 2) e.preventDefault();
+    };
+    const end = (e: TouchEvent) => onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "end");
+    elD.addEventListener("touchstart", start, { passive: true });
+    elD.addEventListener("touchmove", move, { passive: false });
+    elD.addEventListener("touchend", end, { passive: true });
+    elD.addEventListener("touchcancel", end, { passive: true });
+    return () => {
+      elD.removeEventListener("touchstart", start);
+      elD.removeEventListener("touchmove", move);
+      elD.removeEventListener("touchend", end);
+      elD.removeEventListener("touchcancel", end);
+    };
+  }, []);
+
+  const ySpanIn = () => {
+    setYSpanF((s) => Math.min(Y_SPAN_MAX, s * ZOOM_STEP));
+    setYSpanD((s) => Math.min(Y_SPAN_MAX, s * ZOOM_STEP));
+  };
+  const ySpanOut = () => {
+    setYSpanF((s) => Math.max(Y_SPAN_MIN, s / ZOOM_STEP));
+    setYSpanD((s) => Math.max(Y_SPAN_MIN, s / ZOOM_STEP));
+  };
+  const ySpanReset = () => {
+    if (!parsed.ok) return;
+    const { f, df } = parsed;
+    const sample = (fn: (x: number) => number, xLo: number, xHi: number) => {
+      let lo = fn(xLo);
+      let hi = lo;
+      for (let i = 0; i <= 100; i++) {
+        const xx = xLo + (xHi - xLo) * (i / 100);
+        try {
+          const yy = fn(xx);
+          if (Number.isFinite(yy)) {
+            lo = Math.min(lo, yy);
+            hi = Math.max(hi, yy);
+          }
+        } catch {
+          // skip
+        }
+      }
+      const aspectF = (H2 - pad * 2) / (W - pad * 2);
+      const aspectD = (H1 - pad * 2) / (W - pad * 2);
+      const spanF = Math.max((hi - lo) * 1.24, (xHi - xLo) * aspectF);
+      const spanD = Math.max((hi - lo) * 1.24, (xHi - xLo) * aspectD);
+      return { spanF: Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, spanF)), spanD: Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, spanD)) };
+    };
+    const { spanF, spanD } = sample(f, xMinF, xMaxF);
+    const d = sample(df, xMinD, xMaxD);
+    setYSpanF(spanF);
+    setYSpanD(d.spanD);
+  };
+
+  useEffect(() => {
+    const step = () => {
+      ySpanDoneFRef.current = false;
+      ySpanDoneDRef.current = false;
+      setDisplayYSpanF((prev) => {
+        const next = prev + (ySpanF - prev) * 0.18;
+        ySpanDoneFRef.current = Math.abs(next - ySpanF) < 0.05;
+        return Math.abs(next - ySpanF) < 0.05 ? ySpanF : next;
+      });
+      setDisplayYSpanD((prev) => {
+        const next = prev + (ySpanD - prev) * 0.18;
+        ySpanDoneDRef.current = Math.abs(next - ySpanD) < 0.05;
+        return Math.abs(next - ySpanD) < 0.05 ? ySpanD : next;
+      });
+      ySpanRafRef.current = requestAnimationFrame(() => {
+        if (!ySpanDoneFRef.current || !ySpanDoneDRef.current) step();
+      });
+    };
+    ySpanRafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (ySpanRafRef.current) cancelAnimationFrame(ySpanRafRef.current);
+    };
+  }, [ySpanF, ySpanD]);
 
   const yRangeF = useMemo(() => {
     if (!parsed.ok) return { min: -1, max: 1 };
-    const { f } = parsed;
-    const vals: number[] = [];
-    for (let i = 0; i <= 500; i++) {
-      const xx = xMinF + (xMaxF - xMinF) * (i / 500);
-      try {
-        vals.push(f(xx));
-      } catch {
-        // skip
-      }
-    }
-    if (vals.length === 0) return { min: -1, max: 1 };
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const m = (max - min) * 0.18 + 0.8;
-    const raw = { min: min - m, max: max + m };
-    const baseSpan = ((H2 - pad * 2) * (xMaxF - xMinF)) / (W - pad * 2);
-    const center = (raw.min + raw.max) / 2 + panYF;
-    return { min: center - baseSpan / 2, max: center + baseSpan / 2 };
-  }, [parsed, xMinF, xMaxF, panYF]);
+    const center = panYF;
+    return { min: center - displayYSpanF / 2, max: center + displayYSpanF / 2 };
+  }, [parsed, panYF, displayYSpanF]);
 
   const yRangeD = useMemo(() => {
     if (!parsed.ok) return { min: -1, max: 1 };
-    const { df } = parsed;
-    const vals: number[] = [];
-    for (let i = 0; i <= 500; i++) {
-      const xx = xMinD + (xMaxD - xMinD) * (i / 500);
-      try {
-        vals.push(df(xx));
-      } catch {
-        // skip
-      }
-    }
-    if (vals.length === 0) return { min: -1, max: 1 };
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const m = (max - min) * 0.22 + 0.8;
-    const raw = { min: min - m, max: max + m };
-    const baseSpan = ((H1 - pad * 2) * (xMaxD - xMinD)) / (W - pad * 2);
-    const center = (raw.min + raw.max) / 2 + panYD;
-    return { min: center - baseSpan / 2, max: center + baseSpan / 2 };
-  }, [parsed, xMinD, xMaxD, panYD]);
+    const center = panYD;
+    return { min: center - displayYSpanD / 2, max: center + displayYSpanD / 2 };
+  }, [parsed, panYD, displayYSpanD]);
 
   const sxF = (v: number, width: number) =>
     pad + ((v - xMinF) / (xMaxF - xMinF)) * (width - pad * 2);
@@ -414,11 +662,11 @@ export default function CustomDerivative() {
 
   const syF = (v: number) =>
     pad +
-    (1 - (v - yRangeF.min) / (yRangeF.max - yRangeF.min)) * (H2 - pad * 2);
+    (1 - (v - yRangeF.min) / (yRangeF.max - yRangeF.min)) * (H1 - pad * 2);
 
   const syD = (v: number) =>
     pad +
-    (1 - (v - yRangeD.min) / (yRangeD.max - yRangeD.min)) * (H1 - pad * 2);
+    (1 - (v - yRangeD.min) / (yRangeD.max - yRangeD.min)) * (H2 - pad * 2);
 
   const curveF = useMemo(() => {
     if (!parsed.ok) return "";
@@ -498,14 +746,41 @@ export default function CustomDerivative() {
         <div className="rounded-[22px] bg-limitdiff-card border-gradient border border-white/10 shadow-card backdrop-blur-sm overflow-hidden transition-shadow duration-300 hover:shadow-card-hover">
           <div className="p-5 bg-limitdiff-panel border-b border-white/10 space-y-4">
             <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-ui-muted shrink-0 font-medium">
+                  入力:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setInputMode("f")}
+                  className={`rounded-xl py-2 px-4 text-sm font-medium border transition-all duration-200 ${
+                    inputMode === "f"
+                      ? "border-accent-cyan/60 bg-accent-cyan/20 text-white shadow-glow-cyan"
+                      : "border-white/20 bg-white/8 text-ui-base hover:bg-accent-cyan/10 hover:border-accent-cyan/40"
+                  }`}
+                >
+                  f(x) を設定
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInputMode("df")}
+                  className={`rounded-xl py-2 px-4 text-sm font-medium border transition-all duration-200 ${
+                    inputMode === "df"
+                      ? "border-accent-purple/60 bg-accent-purple/20 text-white shadow-glow-purple"
+                      : "border-white/20 bg-white/8 text-ui-base hover:bg-accent-purple/10 hover:border-accent-purple/40"
+                  }`}
+                >
+                  f'(x) を設定
+                </button>
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-ui-base font-semibold shrink-0 text-lg">
-                  f'(x) =
+                  {inputMode === "f" ? "y = f(x) =" : "f'(x) ="}
                 </span>
                 <span className="text-accent-purple font-mono text-lg min-h-[1.5rem] glow-text-purple inline-flex flex-wrap items-baseline">
-                  <FormulaText text={termsToDisplayString(terms)} />
+                  <FormulaText text={inputMode === "f" ? termsToDisplayString(termsF) : termsToDisplayString(terms)} />
                 </span>
-                {terms.length > 0 && (
+                {(inputMode === "f" ? termsF.length > 0 : terms.length > 0) && (
                   <>
                     <button
                       type="button"
@@ -534,7 +809,7 @@ export default function CustomDerivative() {
 
               <div className="flex flex-wrap gap-2 items-center">
                 <span className="text-sm text-ui-muted shrink-0 font-medium">
-                  f'(x) の項を追加:
+                  {inputMode === "f" ? "項を追加:" : "f'(x) の項を追加:"}
                 </span>
                 {TERM_BUTTONS.map(({ type, label }) => (
                   <button
@@ -703,6 +978,7 @@ export default function CustomDerivative() {
                 )}
               </div>
 
+              {inputMode === "df" && (
               <div className="flex flex-wrap gap-4 items-center">
                 <span className="text-xs text-ui-muted shrink-0">
                   積分定数 C =
@@ -724,6 +1000,7 @@ export default function CustomDerivative() {
                   className="w-16 px-2 py-1 rounded bg-transparent border border-white/20 text-ui-base text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-accent-cyan/50"
                 />
               </div>
+              )}
             </div>
 
             <div className="flex flex-wrap items-end gap-4">
@@ -771,9 +1048,25 @@ export default function CustomDerivative() {
                       <span className="text-xs text-ui-muted">f(x) =</span>
                       <span className="text-sm text-cyan-300 font-mono">
                         <FormulaText
-                          text={integralToDisplay(
-                            termsToIntegralExpr(terms, integralConst)
-                          )}
+                          text={
+                            inputMode === "f"
+                              ? termsToDisplayString(termsF)
+                              : integralToDisplay(
+                                  termsToIntegralExpr(terms, integralConst)
+                                )
+                          }
+                        />
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs text-ui-muted">f'(x) =</span>
+                      <span className="text-sm text-accent-purple font-mono">
+                        <FormulaText
+                          text={
+                            inputMode === "f"
+                              ? derivativeToDisplay(parsed.dfStr)
+                              : termsToDisplayString(terms)
+                          }
                         />
                       </span>
                     </div>
@@ -846,18 +1139,22 @@ export default function CustomDerivative() {
                     </span>
                   </div>
                 </div>
-                <p className="text-xs text-ui-dim text-right">グラフ内をドラッグまたはスワイプで移動</p>
+                <p className="text-xs text-ui-dim text-right">
+                  グラフ内をドラッグまたはスワイプで移動
+                </p>
                 <div className="rounded-[18px] border border-white/15 bg-[rgba(15,23,42,0.5)] p-3 overflow-hidden">
                   <svg
+                    ref={svgFRef}
                     width={W}
                     height={H1}
                     className="block touch-none cursor-grab active:cursor-grabbing"
                     onPointerDown={(e) => {
-                      const tag = (e.target as SVGElement).tagName;
-                      if (tag !== "circle" && tag !== "line") {
-                        panning.current = true;
-                        lastPan.current = { x: e.clientX, y: e.clientY };
-                      }
+                      if (panning.current) return;
+                      if ((e.target as SVGElement).tagName === "line") return;
+                      if ((e.target as SVGElement).tagName === "circle") return;
+                      panning.current = true;
+                      lastPan.current = { x: e.clientX, y: e.clientY };
+                      (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
                     }}
                     onPointerMove={(e) => {
                       if (!panning.current) return;
@@ -865,95 +1162,37 @@ export default function CustomDerivative() {
                       const dx = e.clientX - lastPan.current.x;
                       const dy = e.clientY - lastPan.current.y;
                       lastPan.current = { x: e.clientX, y: e.clientY };
-                      const dxData = (dx / (W - pad * 2)) * (xMaxD - xMinD) * PAN_X_FACTOR;
-                      const dyData = -(dy / (H1 - pad * 2)) * (yRangeD.max - yRangeD.min) * PAN_Y_FACTOR;
+                      const drawW = W - pad * 2;
+                      const drawH = H1 - pad * 2;
+                      const dxData = (dx / drawW) * (xMaxF - xMinF) * PAN_FACTOR;
+                      setPanXF((p) => p - dxData);
                       setPanXD((p) => p - dxData);
+                      const dyData =
+                        -(dy / drawH) *
+                        (yRangeF.max - yRangeF.min) *
+                        PAN_FACTOR;
+                      setPanYF((p) => p - dyData);
                       setPanYD((p) => p - dyData);
                     }}
-                    onPointerUp={() => { panning.current = false; }}
-                    onPointerLeave={() => { panning.current = false; }}
+                    onPointerUp={(e) => {
+                      (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId);
+                      panning.current = false;
+                    }}
+                    onPointerLeave={(e) => {
+                      if (panning.current)
+                        (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId);
+                      panning.current = false;
+                    }}
                   >
-                    <rect width={W} height={H1} fill="transparent" style={{ cursor: "grab" }} />
+                    <rect
+                      width={W}
+                      height={H1}
+                      fill="transparent"
+                      style={{ cursor: "grab" }}
+                    />
                     <GridLines
                       width={W}
                       height={H1}
-                      pad={pad}
-                      xMin={xMinD}
-                      xMax={xMaxD}
-                      yMin={yRangeD.min}
-                      yMax={yRangeD.max}
-                      sx={sxD}
-                      sy={syD}
-                      strokeGrid={strokeGrid}
-                      strokeAxis={strokeAxis}
-                    />
-                    <path
-                      d={curveD}
-                      stroke={colors.d}
-                      strokeWidth={2.3}
-                      fill="none"
-                    />
-                    <line
-                      x1={xPxD}
-                      y1={syD(yD)}
-                      x2={xPxD}
-                      y2={H1 - pad}
-                      stroke={colors.x}
-                      strokeWidth={1.5}
-                      strokeDasharray="4 2"
-                      opacity={0.8}
-                    />
-                    <circle cx={xPxD} cy={syD(yD)} r={6} fill={colors.x} />
-                    <text
-                      x={xPxD + 10}
-                      y={syD(yD) + 4}
-                      textAnchor="start"
-                      style={{
-                        fontSize: 11,
-                        fill: "rgba(255,255,255,0.7)",
-                        fontFamily: "system-ui",
-                      }}
-                    >
-                      ({xValue.toFixed(1)}, {fmt(dfx, 1)})
-                    </text>
-                  </svg>
-                  <div className="flex gap-2.5 mt-2.5 flex-wrap">
-                    <span className="rounded-full py-2 px-2.5 border border-white/15 bg-white/[0.05] text-ui-base font-semibold cursor-default">
-                      y = f'(x)
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-3.5 rounded-[18px] border border-white/15 bg-[rgba(15,23,42,0.5)] p-3 overflow-hidden">
-                  <svg
-                    width={W}
-                    height={H2}
-                    className="block touch-none cursor-grab active:cursor-grabbing"
-                    onPointerDown={(e) => {
-                      const tag = (e.target as SVGElement).tagName;
-                      if (tag !== "circle" && tag !== "line") {
-                        panning.current = true;
-                        lastPan.current = { x: e.clientX, y: e.clientY };
-                      }
-                    }}
-                    onPointerMove={(e) => {
-                      if (!panning.current) return;
-                      e.preventDefault();
-                      const dx = e.clientX - lastPan.current.x;
-                      const dy = e.clientY - lastPan.current.y;
-                      lastPan.current = { x: e.clientX, y: e.clientY };
-                      const dxData = (dx / (W - pad * 2)) * (xMaxF - xMinF) * PAN_X_FACTOR;
-                      const dyData = -(dy / (H2 - pad * 2)) * (yRangeF.max - yRangeF.min) * PAN_Y_FACTOR;
-                      setPanXF((p) => p - dxData);
-                      setPanYF((p) => p - dyData);
-                    }}
-                    onPointerUp={() => { panning.current = false; }}
-                    onPointerLeave={() => { panning.current = false; }}
-                  >
-                    <rect width={W} height={H2} fill="transparent" style={{ cursor: "grab" }} />
-                    <GridLines
-                      width={W}
-                      height={H2}
                       pad={pad}
                       xMin={xMinF}
                       xMax={xMaxF}
@@ -974,7 +1213,7 @@ export default function CustomDerivative() {
                       x1={xPxF}
                       y1={syF(yF)}
                       x2={xPxF}
-                      y2={H2 - pad}
+                      y2={H1 - pad}
                       stroke={colors.x}
                       strokeWidth={1.5}
                       strokeDasharray="4 2"
@@ -997,6 +1236,104 @@ export default function CustomDerivative() {
                   <div className="flex gap-2.5 mt-2.5 flex-wrap">
                     <span className="rounded-full py-2 px-2.5 border border-white/15 bg-white/[0.05] text-ui-base font-semibold cursor-default">
                       y = f(x)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-3.5 rounded-[18px] border border-white/15 bg-[rgba(15,23,42,0.5)] p-3 overflow-hidden">
+                  <svg
+                    ref={svgDRef}
+                    width={W}
+                    height={H2}
+                    className="block touch-none cursor-grab active:cursor-grabbing"
+                    onPointerDown={(e) => {
+                      if (panning.current) return;
+                      if ((e.target as SVGElement).tagName === "line") return;
+                      if ((e.target as SVGElement).tagName === "circle") return;
+                      panning.current = true;
+                      lastPan.current = { x: e.clientX, y: e.clientY };
+                      (e.currentTarget as SVGElement).setPointerCapture(e.pointerId);
+                    }}
+                    onPointerMove={(e) => {
+                      if (!panning.current) return;
+                      e.preventDefault();
+                      const dx = e.clientX - lastPan.current.x;
+                      const dy = e.clientY - lastPan.current.y;
+                      lastPan.current = { x: e.clientX, y: e.clientY };
+                      const drawW = W - pad * 2;
+                      const drawH = H2 - pad * 2;
+                      const dxData = (dx / drawW) * (xMaxD - xMinD) * PAN_FACTOR;
+                      setPanXF((p) => p - dxData);
+                      setPanXD((p) => p - dxData);
+                      const dyData =
+                        -(dy / drawH) *
+                        (yRangeD.max - yRangeD.min) *
+                        PAN_FACTOR;
+                      setPanYF((p) => p - dyData);
+                      setPanYD((p) => p - dyData);
+                    }}
+                    onPointerUp={(e) => {
+                      (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId);
+                      panning.current = false;
+                    }}
+                    onPointerLeave={(e) => {
+                      if (panning.current)
+                        (e.currentTarget as SVGElement).releasePointerCapture(e.pointerId);
+                      panning.current = false;
+                    }}
+                  >
+                    <rect
+                      width={W}
+                      height={H2}
+                      fill="transparent"
+                      style={{ cursor: "grab" }}
+                    />
+                    <GridLines
+                      width={W}
+                      height={H2}
+                      pad={pad}
+                      xMin={xMinD}
+                      xMax={xMaxD}
+                      yMin={yRangeD.min}
+                      yMax={yRangeD.max}
+                      sx={sxD}
+                      sy={syD}
+                      strokeGrid={strokeGrid}
+                      strokeAxis={strokeAxis}
+                    />
+                    <path
+                      d={curveD}
+                      stroke={colors.d}
+                      strokeWidth={2.3}
+                      fill="none"
+                    />
+                    <line
+                      x1={xPxD}
+                      y1={syD(yD)}
+                      x2={xPxD}
+                      y2={H2 - pad}
+                      stroke={colors.x}
+                      strokeWidth={1.5}
+                      strokeDasharray="4 2"
+                      opacity={0.8}
+                    />
+                    <circle cx={xPxD} cy={syD(yD)} r={6} fill={colors.x} />
+                    <text
+                      x={xPxD + 10}
+                      y={syD(yD) + 4}
+                      textAnchor="start"
+                      style={{
+                        fontSize: 11,
+                        fill: "rgba(255,255,255,0.7)",
+                        fontFamily: "system-ui",
+                      }}
+                    >
+                      ({xValue.toFixed(1)}, {fmt(dfx, 1)})
+                    </text>
+                  </svg>
+                  <div className="flex gap-2.5 mt-2.5 flex-wrap">
+                    <span className="rounded-full py-2 px-2.5 border border-white/15 bg-white/[0.05] text-ui-base font-semibold cursor-default">
+                      y = f'(x)
                     </span>
                   </div>
                 </div>

@@ -16,10 +16,12 @@ import {
 const math = create(all);
 const { W, H1, H2, pad } = LAYOUT;
 const X_SPAN_MIN = 2;
-const X_SPAN_MAX = 20;
-const DEFAULT_X_SPAN = 7;
-const PAN_X_FACTOR = 0.45;
-const PAN_Y_FACTOR = 0.45;
+const X_SPAN_MAX = 40;
+/** 初期表示は縮小（広め）にして毎回探す手間を省く */
+const DEFAULT_X_SPAN = 10;
+const Y_SPAN_MIN = 0.5;
+const Y_SPAN_MAX = 500;
+const PAN_FACTOR = 0.5;
 
 type TermType = "x4" | "x3" | "x2" | "x" | "const";
 
@@ -137,7 +139,10 @@ function toMathJsFormat(s: string): string {
 }
 
 function mergeAndSortTerms(terms: Term[]): Term[] {
-  const byType: Record<TermType, { coef: number; coefStr?: string; nonzeroCount: number }> = {
+  const byType: Record<
+    TermType,
+    { coef: number; coefStr?: string; nonzeroCount: number }
+  > = {
     x4: { coef: 0, nonzeroCount: 0 },
     x3: { coef: 0, nonzeroCount: 0 },
     x2: { coef: 0, nonzeroCount: 0 },
@@ -192,12 +197,23 @@ export default function CustomFunction() {
   const [xValue, setXValue] = useState(0.6);
   const [xInputStr, setXInputStr] = useState("0.6");
   const [xSpan, setXSpan] = useState(DEFAULT_X_SPAN);
+  const [ySpanF, setYSpanF] = useState(10);
+  const [ySpanD, setYSpanD] = useState(10);
+  const [displayYSpanF, setDisplayYSpanF] = useState(10);
+  const [displayYSpanD, setDisplayYSpanD] = useState(10);
   const [panXF, setPanXF] = useState(0);
   const [panYF, setPanYF] = useState(0);
   const [panXD, setPanXD] = useState(0);
   const [panYD, setPanYD] = useState(0);
   const panning = useRef(false);
   const lastPan = useRef({ x: 0, y: 0 });
+  const ySpanRafRef = useRef<number | undefined>(undefined);
+  const ySpanDoneFRef = useRef(false);
+  const ySpanDoneDRef = useRef(false);
+  const svgFRef = useRef<SVGSVGElement>(null);
+  const svgDRef = useRef<SVGSVGElement>(null);
+  const onWheelZoomRef = useRef<(e: React.WheelEvent<SVGSVGElement>) => void>(() => {});
+  const onPinchZoomRef = useRef<(e: React.TouchEvent<SVGSVGElement>, type: "start" | "move" | "end") => void>(() => {});
 
   const xMinF = panXF - xSpan / 2;
   const xMaxF = panXF + xSpan / 2;
@@ -260,15 +276,38 @@ export default function CustomFunction() {
     const aspect = (H1 - pad * 2) / (W - pad * 2);
     const fitXSpan = Math.max(bboxW, bboxH / aspect) * 1.05;
     let newXSpan = Math.max(X_SPAN_MIN, Math.min(X_SPAN_MAX, fitXSpan));
-    if (newXSpan <= 2.5) newXSpan = 2;
-    else if (newXSpan <= 3.5) newXSpan = 3;
-    else if (newXSpan <= 4.5) newXSpan = 4;
-    else if (newXSpan <= 5.5) newXSpan = 5;
-    else if (newXSpan <= 6.5) newXSpan = 6;
-    else newXSpan = Math.min(8, Math.round(newXSpan));
+    newXSpan = Math.max(DEFAULT_X_SPAN, newXSpan);
     setXSpan(newXSpan);
-    setPanYF((yLo + yHi) / 2);
-    setPanYD((yLo + yHi) / 2);
+    const centerX = (xLo + xHi) / 2;
+    const visibleXLo = centerX - newXSpan / 2;
+    const visibleXHi = centerX + newXSpan / 2;
+    let visibleYLo = f(visibleXLo);
+    let visibleYHi = visibleYLo;
+    for (let i = 0; i <= 100; i++) {
+      const xx = visibleXLo + (visibleXHi - visibleXLo) * (i / 100);
+      try {
+        const yy = f(xx);
+        if (Number.isFinite(yy)) {
+          visibleYLo = Math.min(visibleYLo, yy);
+          visibleYHi = Math.max(visibleYHi, yy);
+        }
+      } catch {
+        // skip
+      }
+    }
+    const visibleCenterY = (visibleYLo + visibleYHi) / 2;
+    setPanYF(visibleCenterY);
+    setPanYD(visibleCenterY);
+    const fitYSpan = Math.max(
+      (visibleYHi - visibleYLo) * 1.24,
+      ((H1 - pad * 2) * (visibleXHi - visibleXLo)) / (W - pad * 2)
+    );
+    const newYSpan = Math.max(
+      Y_SPAN_MIN,
+      Math.min(Y_SPAN_MAX, fitYSpan)
+    );
+    setYSpanF(newYSpan);
+    setYSpanD(newYSpan);
   }, [exprString]);
 
   const addTerm = () => {
@@ -313,59 +352,222 @@ export default function CustomFunction() {
     setXValue(0);
     setXInputStr("0");
     setXSpan(DEFAULT_X_SPAN);
+    setYSpanF(10);
+    setYSpanD(10);
+    setDisplayYSpanF(10);
+    setDisplayYSpanD(10);
     setPanXF(0);
     setPanYF(0);
     setPanXD(0);
     setPanYD(0);
   };
 
-  const xSpanIn = () => setXSpan((s) => Math.min(X_SPAN_MAX, s * 1.2));
-  const xSpanOut = () => setXSpan((s) => Math.max(X_SPAN_MIN, s / 1.2));
+  const ZOOM_STEP = 1.4;
+  const xSpanIn = () => setXSpan((s) => Math.min(X_SPAN_MAX, s * ZOOM_STEP));
+  const xSpanOut = () => setXSpan((s) => Math.max(X_SPAN_MIN, s / ZOOM_STEP));
   const xSpanReset = () => setXSpan(DEFAULT_X_SPAN);
+
+  const onWheelZoom = (e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cursorPx = e.clientX - rect.left;
+    const drawW = W - pad * 2;
+    const cursorX_data = panXF - xSpan / 2 + ((cursorPx - pad) / drawW) * xSpan;
+    const factor = 1 + e.deltaY * 0.005;
+    const newXSpan = Math.max(X_SPAN_MIN, Math.min(X_SPAN_MAX, xSpan * factor));
+    const newPanX = cursorX_data + newXSpan * (0.5 - (cursorPx - pad) / drawW);
+    const scale = newXSpan / xSpan;
+    setXSpan(newXSpan);
+    setPanXF(newPanX);
+    setPanXD(newPanX);
+    setYSpanF((s) => Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, s * scale)));
+    setYSpanD((s) => Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, s * scale)));
+  };
+
+  const pinchRef = useRef<{
+    distance: number;
+    xSpan: number;
+    panXF: number;
+    centerX_data: number;
+    centerPx: number;
+  } | null>(null);
+
+  const onPinchZoom = (
+    e: React.TouchEvent<SVGSVGElement>,
+    type: "start" | "move" | "end"
+  ) => {
+    const touches = e.touches;
+    if (type === "end" || touches.length < 2) {
+      pinchRef.current = null;
+      return;
+    }
+    if (touches.length !== 2) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px1 = touches[0].clientX - rect.left;
+    const px2 = touches[1].clientX - rect.left;
+    const py1 = touches[0].clientY - rect.top;
+    const py2 = touches[1].clientY - rect.top;
+    const centerPx = (px1 + px2) / 2;
+    const distance = Math.hypot(px2 - px1, py2 - py1) || 1;
+    const drawW = W - pad * 2;
+    if (type === "start") {
+      const centerX_data = panXF - xSpan / 2 + ((centerPx - pad) / drawW) * xSpan;
+      pinchRef.current = { distance, xSpan, panXF, centerX_data, centerPx };
+      return;
+    }
+    const prev = pinchRef.current;
+    if (!prev) return;
+    const zoomFactor = distance / prev.distance;
+    const newXSpan = Math.max(X_SPAN_MIN, Math.min(X_SPAN_MAX, prev.xSpan * zoomFactor));
+    const newPanX = prev.centerX_data + newXSpan * (0.5 - (centerPx - pad) / drawW);
+    const scale = newXSpan / prev.xSpan;
+    setXSpan(newXSpan);
+    setPanXF(newPanX);
+    setPanXD(newPanX);
+    setYSpanF((s) => Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, s * scale)));
+    setYSpanD((s) => Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, s * scale)));
+    pinchRef.current = { ...prev, distance, xSpan: newXSpan, panXF: newPanX };
+  };
+
+  onWheelZoomRef.current = onWheelZoom;
+  onPinchZoomRef.current = onPinchZoom;
+
+  useEffect(() => {
+    const elF = svgFRef.current;
+    if (!elF) return;
+    const onWheel = (e: WheelEvent) => {
+      onWheelZoomRef.current(e as unknown as React.WheelEvent<SVGSVGElement>);
+      e.preventDefault();
+    };
+    elF.addEventListener("wheel", onWheel, { passive: false });
+    return () => elF.removeEventListener("wheel", onWheel);
+  }, []);
+  useEffect(() => {
+    const elD = svgDRef.current;
+    if (!elD) return;
+    const onWheel = (e: WheelEvent) => {
+      onWheelZoomRef.current(e as unknown as React.WheelEvent<SVGSVGElement>);
+      e.preventDefault();
+    };
+    elD.addEventListener("wheel", onWheel, { passive: false });
+    return () => elD.removeEventListener("wheel", onWheel);
+  }, []);
+
+  useEffect(() => {
+    const elF = svgFRef.current;
+    if (!elF) return;
+    const start = (e: TouchEvent) => onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "start");
+    const move = (e: TouchEvent) => {
+      onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "move");
+      if (e.touches.length === 2) e.preventDefault();
+    };
+    const end = (e: TouchEvent) => onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "end");
+    elF.addEventListener("touchstart", start, { passive: true });
+    elF.addEventListener("touchmove", move, { passive: false });
+    elF.addEventListener("touchend", end, { passive: true });
+    elF.addEventListener("touchcancel", end, { passive: true });
+    return () => {
+      elF.removeEventListener("touchstart", start);
+      elF.removeEventListener("touchmove", move);
+      elF.removeEventListener("touchend", end);
+      elF.removeEventListener("touchcancel", end);
+    };
+  }, []);
+  useEffect(() => {
+    const elD = svgDRef.current;
+    if (!elD) return;
+    const start = (e: TouchEvent) => onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "start");
+    const move = (e: TouchEvent) => {
+      onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "move");
+      if (e.touches.length === 2) e.preventDefault();
+    };
+    const end = (e: TouchEvent) => onPinchZoomRef.current(e as unknown as React.TouchEvent<SVGSVGElement>, "end");
+    elD.addEventListener("touchstart", start, { passive: true });
+    elD.addEventListener("touchmove", move, { passive: false });
+    elD.addEventListener("touchend", end, { passive: true });
+    elD.addEventListener("touchcancel", end, { passive: true });
+    return () => {
+      elD.removeEventListener("touchstart", start);
+      elD.removeEventListener("touchmove", move);
+      elD.removeEventListener("touchend", end);
+      elD.removeEventListener("touchcancel", end);
+    };
+  }, []);
+
+  const ySpanIn = () => {
+    setYSpanF((s) => Math.min(Y_SPAN_MAX, s * ZOOM_STEP));
+    setYSpanD((s) => Math.min(Y_SPAN_MAX, s * ZOOM_STEP));
+  };
+  const ySpanOut = () => {
+    setYSpanF((s) => Math.max(Y_SPAN_MIN, s / ZOOM_STEP));
+    setYSpanD((s) => Math.max(Y_SPAN_MIN, s / ZOOM_STEP));
+  };
+  const ySpanReset = () => {
+    if (!parsed.ok) return;
+    const { f, df } = parsed;
+    const sample = (fn: (x: number) => number, xLo: number, xHi: number) => {
+      let lo = fn(xLo);
+      let hi = lo;
+      for (let i = 0; i <= 100; i++) {
+        const xx = xLo + (xHi - xLo) * (i / 100);
+        try {
+          const yy = fn(xx);
+          if (Number.isFinite(yy)) {
+            lo = Math.min(lo, yy);
+            hi = Math.max(hi, yy);
+          }
+        } catch {
+          // skip
+        }
+      }
+      const aspectF = (H1 - pad * 2) / (W - pad * 2);
+      const aspectD = (H2 - pad * 2) / (W - pad * 2);
+      const spanF = Math.max((hi - lo) * 1.24, (xHi - xLo) * aspectF);
+      const spanD = Math.max((hi - lo) * 1.24, (xHi - xLo) * aspectD);
+      return { spanF: Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, spanF)), spanD: Math.max(Y_SPAN_MIN, Math.min(Y_SPAN_MAX, spanD)) };
+    };
+    const { spanF, spanD } = sample(f, xMinF, xMaxF);
+    const d = sample(df, xMinD, xMaxD);
+    setYSpanF(spanF);
+    setYSpanD(d.spanD);
+  };
 
   const yRangeF = useMemo(() => {
     if (!parsed.ok) return { min: -1, max: 1 };
-    const { f } = parsed;
-    const vals: number[] = [];
-    for (let i = 0; i <= 500; i++) {
-      const xx = xMinF + (xMaxF - xMinF) * (i / 500);
-      try {
-        vals.push(f(xx));
-      } catch {
-        // skip
-      }
-    }
-    if (vals.length === 0) return { min: -1, max: 1 };
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const m = (max - min) * 0.18 + 0.8;
-    const raw = { min: min - m, max: max + m };
-    const baseSpan = ((H1 - pad * 2) * (xMaxF - xMinF)) / (W - pad * 2);
-    const center = (raw.min + raw.max) / 2 + panYF;
-    return { min: center - baseSpan / 2, max: center + baseSpan / 2 };
-  }, [parsed, xMinF, xMaxF, panYF]);
+    const center = panYF;
+    return { min: center - displayYSpanF / 2, max: center + displayYSpanF / 2 };
+  }, [parsed, panYF, displayYSpanF]);
 
   const yRangeD = useMemo(() => {
     if (!parsed.ok) return { min: -1, max: 1 };
-    const { df } = parsed;
-    const vals: number[] = [];
-    for (let i = 0; i <= 500; i++) {
-      const xx = xMinD + (xMaxD - xMinD) * (i / 500);
-      try {
-        vals.push(df(xx));
-      } catch {
-        // skip
-      }
-    }
-    if (vals.length === 0) return { min: -1, max: 1 };
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    const m = (max - min) * 0.22 + 0.8;
-    const raw = { min: min - m, max: max + m };
-    const baseSpan = ((H2 - pad * 2) * (xMaxD - xMinD)) / (W - pad * 2);
-    const center = (raw.min + raw.max) / 2 + panYD;
-    return { min: center - baseSpan / 2, max: center + baseSpan / 2 };
-  }, [parsed, xMinD, xMaxD, panYD]);
+    const center = panYD;
+    return { min: center - displayYSpanD / 2, max: center + displayYSpanD / 2 };
+  }, [parsed, panYD, displayYSpanD]);
+
+  useEffect(() => {
+    const step = () => {
+      ySpanDoneFRef.current = false;
+      ySpanDoneDRef.current = false;
+      setDisplayYSpanF((prev) => {
+        const next = prev + (ySpanF - prev) * 0.18;
+        ySpanDoneFRef.current = Math.abs(next - ySpanF) < 0.05;
+        return Math.abs(next - ySpanF) < 0.05 ? ySpanF : next;
+      });
+      setDisplayYSpanD((prev) => {
+        const next = prev + (ySpanD - prev) * 0.18;
+        ySpanDoneDRef.current = Math.abs(next - ySpanD) < 0.05;
+        return Math.abs(next - ySpanD) < 0.05 ? ySpanD : next;
+      });
+      ySpanRafRef.current = requestAnimationFrame(() => {
+        if (!ySpanDoneFRef.current || !ySpanDoneDRef.current) step();
+      });
+    };
+    ySpanRafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (ySpanRafRef.current) cancelAnimationFrame(ySpanRafRef.current);
+    };
+  }, [ySpanF, ySpanD]);
 
   const sxF = (v: number, width: number) =>
     pad + ((v - xMinF) / (xMaxF - xMinF)) * (width - pad * 2);
@@ -702,7 +904,7 @@ export default function CustomFunction() {
                         setXValue(raw === "" || raw === "-" ? 0 : n);
                     }}
                     onBlur={() => setXInputStr(xValue.toFixed(1))}
-                      className="w-20 px-3 py-2 rounded-xl bg-transparent border border-white/20 text-ui-base text-sm focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan/30 tabular-nums transition-all duration-200"
+                    className="w-20 px-3 py-2 rounded-xl bg-transparent border border-white/20 text-ui-base text-sm focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan/30 tabular-nums transition-all duration-200"
                   />
                 </div>
                 {parsed.ok ? (
@@ -747,7 +949,9 @@ export default function CustomFunction() {
               <>
                 <div className="flex flex-wrap items-center justify-end gap-4">
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="text-sm text-ui-muted font-medium">x軸の幅:</span>
+                    <span className="text-sm text-ui-muted font-medium">
+                      x軸の幅:
+                    </span>
                     <button
                       type="button"
                       onClick={xSpanOut}
@@ -785,18 +989,21 @@ export default function CustomFunction() {
                     </span>
                   </div>
                 </div>
-                <p className="text-xs text-ui-dim text-right">グラフ内をドラッグまたはスワイプで移動</p>
+                <p className="text-xs text-ui-dim text-right">
+                  グラフ内をドラッグまたはスワイプで移動
+                </p>
                 <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/5 to-transparent p-4 overflow-hidden shadow-inner">
                   <svg
                     width={W}
                     height={H1}
                     className="block touch-none cursor-grab active:cursor-grabbing"
                     onPointerDown={(e) => {
-                      const tag = (e.target as SVGElement).tagName;
-                      if (tag !== "circle" && tag !== "line") {
-                        panning.current = true;
-                        lastPan.current = { x: e.clientX, y: e.clientY };
-                      }
+                      if (panning.current) return;
+                      if ((e.target as SVGElement).tagName === "line") return;
+                      if ((e.target as SVGElement).tagName === "circle") return;
+                      panning.current = true;
+                      lastPan.current = { x: e.clientX, y: e.clientY };
+                      (e.target as SVGElement).setPointerCapture?.(e.pointerId);
                     }}
                     onPointerMove={(e) => {
                       if (!panning.current) return;
@@ -804,15 +1011,35 @@ export default function CustomFunction() {
                       const dx = e.clientX - lastPan.current.x;
                       const dy = e.clientY - lastPan.current.y;
                       lastPan.current = { x: e.clientX, y: e.clientY };
-                      const dxData = (dx / (W - pad * 2)) * (xMaxF - xMinF) * PAN_X_FACTOR;
-                      const dyData = -(dy / (H1 - pad * 2)) * (yRangeF.max - yRangeF.min) * PAN_Y_FACTOR;
+                      const drawW = W - pad * 2;
+                      const drawH = H1 - pad * 2;
+                      const dxData = (dx / drawW) * (xMaxF - xMinF) * PAN_FACTOR;
                       setPanXF((p) => p - dxData);
+                      setPanXD((p) => p - dxData);
+                      const dyData =
+                        -(dy / drawH) *
+                        (yRangeF.max - yRangeF.min) *
+                        PAN_FACTOR;
                       setPanYF((p) => p - dyData);
+                      setPanYD((p) => p - dyData);
                     }}
-                    onPointerUp={() => { panning.current = false; }}
-                    onPointerLeave={() => { panning.current = false; }}
+                    onPointerUp={(e) => {
+                      (e.target as SVGElement).releasePointerCapture?.(e.pointerId);
+                      panning.current = false;
+                    }}
+                    onPointerLeave={(e) => {
+                      if (panning.current)
+                        (e.target as SVGElement).releasePointerCapture?.(e.pointerId);
+                      panning.current = false;
+                    }}
+                    ref={svgFRef}
                   >
-                    <rect width={W} height={H1} fill="transparent" style={{ cursor: "grab" }} />
+                    <rect
+                      width={W}
+                      height={H1}
+                      fill="transparent"
+                      style={{ cursor: "grab" }}
+                    />
                     <GridLines
                       width={W}
                       height={H1}
@@ -872,11 +1099,12 @@ export default function CustomFunction() {
                     height={H2}
                     className="block touch-none cursor-grab active:cursor-grabbing"
                     onPointerDown={(e) => {
-                      const tag = (e.target as SVGElement).tagName;
-                      if (tag !== "circle" && tag !== "line") {
-                        panning.current = true;
-                        lastPan.current = { x: e.clientX, y: e.clientY };
-                      }
+                      if (panning.current) return;
+                      if ((e.target as SVGElement).tagName === "line") return;
+                      if ((e.target as SVGElement).tagName === "circle") return;
+                      panning.current = true;
+                      lastPan.current = { x: e.clientX, y: e.clientY };
+                      (e.target as SVGElement).setPointerCapture?.(e.pointerId);
                     }}
                     onPointerMove={(e) => {
                       if (!panning.current) return;
@@ -884,15 +1112,35 @@ export default function CustomFunction() {
                       const dx = e.clientX - lastPan.current.x;
                       const dy = e.clientY - lastPan.current.y;
                       lastPan.current = { x: e.clientX, y: e.clientY };
-                      const dxData = (dx / (W - pad * 2)) * (xMaxD - xMinD) * PAN_X_FACTOR;
-                      const dyData = -(dy / (H2 - pad * 2)) * (yRangeD.max - yRangeD.min) * PAN_Y_FACTOR;
+                      const drawW = W - pad * 2;
+                      const drawH = H2 - pad * 2;
+                      const dxData = (dx / drawW) * (xMaxD - xMinD) * PAN_FACTOR;
+                      setPanXF((p) => p - dxData);
                       setPanXD((p) => p - dxData);
+                      const dyData =
+                        -(dy / drawH) *
+                        (yRangeD.max - yRangeD.min) *
+                        PAN_FACTOR;
+                      setPanYF((p) => p - dyData);
                       setPanYD((p) => p - dyData);
                     }}
-                    onPointerUp={() => { panning.current = false; }}
-                    onPointerLeave={() => { panning.current = false; }}
+                    onPointerUp={(e) => {
+                      (e.target as SVGElement).releasePointerCapture?.(e.pointerId);
+                      panning.current = false;
+                    }}
+                    onPointerLeave={(e) => {
+                      if (panning.current)
+                        (e.target as SVGElement).releasePointerCapture?.(e.pointerId);
+                      panning.current = false;
+                    }}
+                    ref={svgDRef}
                   >
-                    <rect width={W} height={H2} fill="transparent" style={{ cursor: "grab" }} />
+                    <rect
+                      width={W}
+                      height={H2}
+                      fill="transparent"
+                      style={{ cursor: "grab" }}
+                    />
                     <GridLines
                       width={W}
                       height={H2}

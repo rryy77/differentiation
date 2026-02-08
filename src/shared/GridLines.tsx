@@ -20,7 +20,27 @@ const TICK_LABEL_STYLE: React.CSSProperties = {
   fontFamily: "system-ui, sans-serif",
 };
 
-// x軸・y軸とも整数のみ表示する（小数目盛りは出さない）
+/** 目標本数に近い目盛りになる「きりの良い」ステップを返す（1,2,5,10,20,...） */
+function niceTickStep(range: number, targetCount: number): number {
+  if (range <= 0 || !Number.isFinite(range)) return 1;
+  let step = range / Math.max(1, targetCount);
+  const magnitude = 10 ** Math.floor(Math.log10(step));
+  const normalized = step / magnitude;
+  const nice =
+    magnitude *
+    (normalized <= 1.5 ? 1 : normalized <= 3 ? 2 : normalized <= 7 ? 5 : 10);
+  return Math.max(0.001, nice);
+}
+
+/** 軸ラベル用に値を短く表示（整数ならそのまま、大きいなら指数や省略） */
+function formatTickLabel(v: number): string {
+  if (!Number.isFinite(v)) return "?";
+  if (Math.abs(v) >= 1e4 || (Math.abs(v) < 0.001 && v !== 0))
+    return v.toExponential(0);
+  if (Number.isInteger(v)) return String(v);
+  const s = v.toPrecision(4);
+  return parseFloat(s).toString();
+}
 
 export function GridLines({
   width,
@@ -81,8 +101,15 @@ export function GridLines({
   }
 
   const tickLen = 5;
+  const xRange = xMax - xMin;
+  const yRange = yMax - yMin;
+  const targetTickCount = 8;
 
-  for (let x = Math.ceil(xMin); x <= Math.floor(xMax); x++) {
+  // x軸: 範囲が大きいときはきりの良いステップで、x軸の本数を適度に
+  const xStep =
+    xRange <= 12 ? 1 : niceTickStep(xRange, targetTickCount);
+  let x = Math.floor(xMin / xStep) * xStep;
+  for (; x <= xMax + 1e-9; x += xStep) {
     const px = sx(x, width);
     if (px < pad || px > width - pad) continue;
     const bottomY = height - pad;
@@ -105,13 +132,16 @@ export function GridLines({
         textAnchor="middle"
         style={TICK_LABEL_STYLE}
       >
-        {x}
+        {formatTickLabel(x)}
       </text>,
     );
   }
 
+  // y軸: x軸と同程度の本数になるようきりの良いステップで（感覚を合わせる）
+  const yStep = niceTickStep(yRange, targetTickCount);
+  let y = Math.floor(yMin / yStep) * yStep;
   const axisX = xMin <= 0 && 0 <= xMax ? sx(0, width) : pad;
-  for (let y = Math.ceil(yMin); y <= Math.floor(yMax); y++) {
+  for (; y <= yMax + 1e-9; y += yStep) {
     const py = sy(y);
     if (py < pad || py > height - pad) continue;
     lines.push(
@@ -133,7 +163,7 @@ export function GridLines({
         textAnchor="end"
         style={TICK_LABEL_STYLE}
       >
-        {y}
+        {formatTickLabel(y)}
       </text>,
     );
   }

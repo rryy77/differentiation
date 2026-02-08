@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { GridLines, strokeGrid, strokeAxis, colors } from "../../shared";
 
 type Props = {
@@ -21,6 +21,11 @@ type Props = {
   onPointerMove: (e: React.PointerEvent<SVGSVGElement>) => void;
   onPointerUp: () => void;
   onPointerLeave: () => void;
+  onWheel?: (e: React.WheelEvent<SVGSVGElement>) => void;
+  onPinchZoom?: (
+    e: React.TouchEvent<SVGSVGElement>,
+    type: "start" | "move" | "end"
+  ) => void;
 };
 
 export function DerivativeGraph({
@@ -43,16 +48,55 @@ export function DerivativeGraph({
   onPointerMove,
   onPointerUp,
   onPointerLeave,
+  onWheel,
+  onPinchZoom,
 }: Props) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || !onWheel) return;
+    const handler = (e: WheelEvent) => {
+      onWheel(e as unknown as React.WheelEvent<SVGSVGElement>);
+      e.preventDefault();
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [onWheel]);
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || !onPinchZoom) return;
+    const start = (e: TouchEvent) =>
+      onPinchZoom(e as unknown as React.TouchEvent<SVGSVGElement>, "start");
+    const move = (e: TouchEvent) => {
+      onPinchZoom(e as unknown as React.TouchEvent<SVGSVGElement>, "move");
+      if (e.touches.length === 2) e.preventDefault();
+    };
+    const end = (e: TouchEvent) =>
+      onPinchZoom(e as unknown as React.TouchEvent<SVGSVGElement>, "end");
+    el.addEventListener("touchstart", start, { passive: true });
+    el.addEventListener("touchmove", move, { passive: false });
+    el.addEventListener("touchend", end, { passive: true });
+    el.addEventListener("touchcancel", end, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", start);
+      el.removeEventListener("touchmove", move);
+      el.removeEventListener("touchend", end);
+      el.removeEventListener("touchcancel", end);
+    };
+  }, [onPinchZoom]);
+
   return (
     <div className="mt-3.5 rounded-[18px] border border-white/15 bg-[rgba(15,23,42,0.5)] p-3 overflow-hidden">
       <svg
+        ref={svgRef}
         width={width}
         height={height}
         onPointerDown={onPointerDownBackground}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={onPointerLeave}
+        onWheel={onWheel}
         className="block touch-none cursor-grab active:cursor-grabbing"
       >
         <rect
